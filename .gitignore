@@ -1,0 +1,9 @@
+.venv
+adhoc-keys
+adhoc-ca-creds
+cleanup_containers.sh
+ADHOC_TEST_ENV.md
+adhoc-env.sh
+tests/lxc/__pycache__
+coverage.xml
+.coverage

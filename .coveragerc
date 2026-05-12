@@ -1,0 +1,31 @@
+[run]
+branch = True
+source =
+    ca
+    cli
+    shim
+    server
+omit =
+    */__pycache__/*
+    */.venv/*
+    */tests/*
+    setup.py
+parallel = False
+
+[report]
+show_missing = True
+skip_covered = False
+precision = 1
+exclude_lines =
+    pragma: no cover
+    raise NotImplementedError
+    if __name__ == .__main__.:
+    if False:
+    pass
+
+[html]
+directory = htmlcov
+title = ssh-rt-auth coverage
+
+[xml]
+output = coverage.xml
