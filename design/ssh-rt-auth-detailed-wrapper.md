@@ -417,6 +417,177 @@ exactly this sequence with explicit verify/rollback prompts.
 
 ---
 
+## 6.6 Clock and time authority
+
+**Status:** Designed 2026-05-14, not yet implemented.
+
+### 6.6.1 The problem clock skew creates
+
+Authorization certs have tight validity windows (~1h default). The
+CA enforces `timestamp_drift_seconds` (default 600s) against the
+`timestamp` field of every `POST /v1/authorize` request. A wrapper
+host whose local clock disagrees with the CA's by more than that
+window gets **every authorization request denied** with
+`clock_drift_too_large`. This is silent fleet-wide DOS — particularly
+nasty because:
+
+- The operator's first symptom is "all my users got logged out at
+  once", not "the clock drifted".
+- NTP misconfiguration is common on freshly provisioned hosts.
+- A single ill-timed VM clock-skew event (e.g., live migration on
+  some hypervisors) can produce a multi-second jump that pushes a
+  previously-healthy host out of the window.
+
+There is no purely-passive defense — if the wrapper's `timestamp`
+field is wrong, the CA can't tell whether the request is a replay,
+a clock-skewed honest call, or an attack. The CA's only safe
+posture is to deny.
+
+### 6.6.2 Design: the CA is the authoritative clock
+
+The wrapper synchronises its perception of "now" to the CA at
+startup, then uses **CA-derived time** in:
+
+- `timestamp` field of every CA request body (the load-bearing
+  case — prevents denials).
+- `valid_before` / `valid_after` of minted inner OpenSSH user
+  certs (so the wrapper-to-inner-sshd handoff agrees with the
+  CA's view).
+- Audit log timestamps emitted by the wrapper (so wrapper logs
+  cross-correlate with the CA's audit log on a single timeline).
+
+The wrapper's *system clock* is still used in places where the CA's
+perspective is irrelevant or unhelpful:
+
+- Outer mTLS handshake — Python's `ssl` module validates cert dates
+  against `time.time()`. We don't fix this at the application layer
+  because mTLS client/server certs are long-lived (30+ days), so a
+  few hours of host skew is harmless.
+- `time.monotonic()` for elapsed-time measurements (timers, etc.) —
+  not affected by wall-clock skew.
+
+### 6.6.3 The `Clock` module
+
+`wrapper/python/clock.py` (forthcoming):
+
+```python
+@dataclass
+class Clock:
+    offset_seconds: float = 0.0
+    last_sync_local_monotonic: float = 0.0   # time.monotonic() at last sync
+    last_sync_local_wall: datetime | None = None
+    last_sync_ca_wall: datetime | None = None
+    sync_failures_in_a_row: int = 0
+
+    def now(self) -> datetime:
+        """CA-perspective UTC datetime."""
+        return _dt.datetime.now(_dt.UTC) + timedelta(seconds=self.offset_seconds)
+
+    async def sync(self, ca_client) -> None:
+        """Hit /v1/clock, compute new offset with round-trip correction."""
+        t_send = time.monotonic()
+        ca_time = await ca_client.get_clock()
+        t_recv = time.monotonic()
+        rtt = t_recv - t_send
+        # Estimate CA time at the moment we received it as midway through
+        # the round-trip; offset that against our local wall clock.
+        local_now = _dt.datetime.now(_dt.UTC)
+        self.offset_seconds = (ca_time - local_now).total_seconds() - rtt / 2
+        self.last_sync_local_monotonic = t_recv
+        self.last_sync_local_wall = local_now
+        self.last_sync_ca_wall = ca_time
+        self.sync_failures_in_a_row = 0
+
+    def staleness_seconds(self) -> float:
+        return time.monotonic() - self.last_sync_local_monotonic
+
+    def is_degraded(self, max_staleness: float = 3600) -> bool:
+        return self.staleness_seconds() > max_staleness
+```
+
+### 6.6.4 Lifecycle
+
+| Event                          | Behaviour                                                                                       |
+|--------------------------------|--------------------------------------------------------------------------------------------------|
+| Wrapper startup                | Sync with CA. **Refuse to start if unreachable** — silently broken offset = silent denials.    |
+| Every CA request (`/v1/authorize`) | Wrapper uses `Clock.now()` for the request timestamp. CA includes its current time in the response; wrapper updates its offset opportunistically. |
+| Background task               | Re-sync every 5 minutes via `/v1/clock`. On failure, log and keep last-known offset.            |
+| Staleness > 1 hour            | Wrapper transitions to "degraded" — emits a metric, surfaces in `admin status`, and (configurable) refuses to mint new inner certs. Existing connections survive. |
+| SIGHUP                        | Force-resync.                                                                                    |
+| `admin verify`                | Reports local time, CA time, offset, last-sync age, staleness state.                            |
+
+### 6.6.5 CA-side requirements
+
+- New endpoint **`GET /v1/clock`** — unauthenticated (no mTLS needed,
+  no policy decisions exposed); returns `{"time": "ISO-8601 UTC",
+  "version": "ssh-rt-auth-ca/x.y"}`. Maximum cache-control:
+  no-store.
+- Every `/v1/authorize` response (grant or deny) carries a `"time"`
+  field as well. Wrappers update their offset on every call,
+  reducing the need for explicit `/v1/clock` traffic.
+- **The CA host's own NTP is now load-bearing.** Operator obligation:
+  multi-source `chronyd`, monitored, alerted on drift.
+
+### 6.6.6 mssh client side
+
+The client tool (separate from the wrapper) makes an unauthenticated
+call to the wrapper's pass-through clock endpoint at startup and
+errors out loudly if local skew exceeds a safe threshold:
+
+```
+$ mssh alice@server-01
+mssh: your local clock is 17h22m off from the CA. Run `chronyc -a
+makestep` (or equivalent) and retry. Authentication can't proceed
+without working local time.
+```
+
+This is **not auto-bypass** — the client's clock must be right for
+mTLS handshake validation of the wrapper's server cert. But the
+clear early-fail is much better operator-experience than
+`Permission denied (publickey)` with no further detail.
+
+### 6.6.7 Failure modes recap
+
+| Bad clock on…                       | Behaviour                                                                  |
+|-------------------------------------|----------------------------------------------------------------------------|
+| CA host                             | Whole fleet sees denials. The single point of clock truth — operator must monitor it. |
+| Wrapper host                        | Mitigated by `Clock` offset; transparent to users.                          |
+| Tier 2/3 shim host                  | Same mechanism (when Phase 1B+ Tier 2/3 picks it up — not in scope today). |
+| Client laptop                       | mssh CLI hard-fails at startup with a clear message.                       |
+| Inner sshd (same host as wrapper)   | Irrelevant; shares the wrapper's clock; CA never enters this loop.         |
+
+### 6.6.8 Why not just "fix everyone's NTP"
+
+Tempting but wrong:
+
+- Hundreds of wrapper hosts is hundreds of NTP configs to keep right.
+  One ill-provisioned host produces silent denials.
+- End-user laptops are the worst case — operators have zero control.
+- VM migrations, sleeping containers, time-jumping after suspend —
+  all routine, all create transient skew that the CA's static window
+  punishes.
+- Making the CA authoritative reduces the operational surface from
+  N hosts to 1 host. Much easier to alert on, much easier to root-cause.
+
+### 6.6.9 What this section explicitly defers
+
+- Wrapper-side application-layer mTLS cert date validation against
+  CA-derived time. Doable (custom verify callback + manual chain
+  validation via `cryptography.x509`) but adds complexity for a
+  rare failure mode (client/server cert lifetimes are long enough
+  that day-scale skew rarely matters here). Open question for v2.
+- Cryptographically authenticated `/v1/clock` responses. Currently
+  unauthenticated; an attacker on-path could poison the wrapper's
+  offset. Mitigation: the wrapper's CA mTLS leg is the actual trust
+  boundary; the wrapper's `/v1/clock` call goes through the same
+  mTLS pipe in practice. Document the threat model when
+  implementing.
+- Time-monotonicity guarantees during clock jumps. Use
+  `time.monotonic()` for elapsed timers; don't rely on
+  `Clock.now()` to be monotonic.
+
+---
+
 ## 7. Per-connection flow
 
 Sequence for one successful connection (deny paths abbreviated to "→ close"):

@@ -402,12 +402,74 @@ In rough order of severity:
 | mTLS root CA key                  | If offline backup intact: restore. If not: re-bootstrap + re-enroll EVERY server (painful). |
 | Bootstrap admin key (after step §6.5) | This was supposed to be deleted. If a real superuser still exists, they can enroll a replacement. If not, full re-bootstrap. |
 
-### 7.4 Time skew
+### 7.4 Time skew — the CA is the authoritative clock
 
-Authz certs have tight validity windows (~1 hour by default). Servers
-that drift more than `timestamp_drift_seconds` (default 600s) from the
-CA's clock will see their requests rejected with
-`clock_drift_too_large`. Run NTP / chrony everywhere.
+Authz certs have tight validity windows (~1 hour by default). A wrapper
+or shim whose local clock disagrees with the CA's by more than
+`defaults.timestamp_drift_seconds` (default 600s) will see every
+authorization request rejected with `clock_drift_too_large` — a
+silent, fleet-wide DOS that's hard to diagnose if you don't know to
+look for it.
+
+**Architecture: the CA is the time authority, not the operator's NTP
+mesh.** The wrapper synchronises its time perception to the CA at
+startup and periodically thereafter, then uses *CA-derived time* for
+every timestamp it sends to the CA. This eliminates the entire class
+of "bad client clock causes auth failures" — there is, by design, no
+way for a client's local clock to be wrong from the CA's perspective.
+
+```
+  Operator → ensure ONE thing has correct time: the CA host.
+                              │
+                              ▼
+  Wrapper → calls /v1/clock at startup; stores offset.
+            Every CA request uses CA-derived time.
+            Re-syncs every 5 minutes in background.
+            Refuses to start if CA unreachable
+            (fail-closed: a broken offset = silent denials).
+                              │
+                              ▼
+  mssh client → checks local skew against /v1/clock at start.
+                Errors out loudly ("your clock is 17 hours off") if
+                skew exceeds a safe threshold. Does NOT auto-bypass —
+                the client must have working time for mTLS dates.
+```
+
+**What this means for you, the operator:**
+
+1. **Run NTP/chrony on the CA host with multiple upstream sources.**
+   Use `chronyd` with at least 3 upstream NTP servers (e.g., your
+   org's NTP cluster plus `2.pool.ntp.org`). The CA host is the
+   single authoritative clock for ssh-rt-auth; if it drifts, the
+   whole fleet drifts with it.
+2. **Monitor the CA host's clock health.** `chronyc tracking` should
+   show `Last offset` and `Root dispersion` both below 100 ms. Alert
+   on either exceeding 500 ms.
+3. **On every other host (wrappers, Tier 2/3 servers), NTP is
+   nice-to-have but not load-bearing for ssh-rt-auth.** The wrapper
+   syncs to the CA at the app layer. The mssh client warns the user
+   if their clock is bad. You don't need to run NTP on every laptop.
+4. **CA outage = wrapper denies new authorizations** (as before),
+   but additionally: a long CA outage stales the wrapper's offset.
+   The wrapper enters a "degraded clock" state after 1 hour of
+   missed re-syncs and refuses to mint inner OpenSSH certs.
+   Surfaced as `ssh-rt-wrapper-admin status` field
+   `clock_sync_state`.
+
+**Failure modes:**
+
+| Bad clock on…           | Behaviour                                                                    |
+|-------------------------|------------------------------------------------------------------------------|
+| CA host                 | **Catastrophic.** Whole fleet sees auth failures. ONE thing to monitor — that's the point. |
+| Wrapper host            | Mitigated. Wrapper applies CA-derived offset.                                  |
+| Tier 2/3 server host    | Mitigated (Tier 2/3 shims also adopt the same offset mechanism in Phase 1B+). |
+| End-user laptop         | mssh CLI errors out at start with a clear message; user sets their clock and retries. |
+| Inner sshd (same host as wrapper) | Irrelevant — wrapper and inner sshd share a clock; CA never enters the loop. |
+
+**Implementation status:** documented design as of 2026-05-14. The CA
+endpoint and wrapper Clock module are not yet implemented. See
+[design/ssh-rt-auth-detailed-wrapper.md § 6.6](design/ssh-rt-auth-detailed-wrapper.md)
+for the spec.
 
 ---
 
