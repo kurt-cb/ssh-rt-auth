@@ -1,0 +1,85 @@
+# ssh-rt-auth wrapper — operator configuration
+#
+# This is the ENTIRE operator-facing config for the wrapper. The inner
+# sshd config is derived from this and hash-validated at startup;
+# operators do NOT edit the inner sshd_config directly. See
+# design/ssh-rt-auth-detailed-wrapper.md §11.
+
+# SAFE-ROLLOUT MODE. See design/ssh-rt-auth-detailed-wrapper.md §6.5.
+# Default at install time is "fallback" — wrapper transparently forwards
+# to fallback.host:fallback.port without calling the CA. Use this to
+# verify the wrapper is wired in correctly without changing your
+# existing auth surface. Flip to "enforce" only after verifying CA
+# reachability and inner-sshd config with `ssh-rt-wrapper-admin verify`.
+mode: fallback   # fallback | enforce
+
+fallback:
+  # Where to forward connections when mode == fallback. Typically the
+  # system sshd on localhost:22. The wrapper does NOT verify auth in
+  # this mode; the downstream sshd does.
+  host: 127.0.0.1
+  port: 22
+
+listen:
+  # External address(es) the wrapper binds for incoming mssh client traffic.
+  external_address: 0.0.0.0
+  external_port: 2200            # change to 22 after migrating clients
+  # Optional: restrict to specific named interfaces (split-domain hosts).
+  interfaces: []                 # empty = bind on all
+
+tls:
+  # Server identity presented in the outer mTLS handshake.
+  server_cert: /etc/ssh-rt-auth/wrapper-server.crt
+  server_key:  /etc/ssh-rt-auth/wrapper-server.key
+  # Trust root for verifying client mTLS certs.
+  user_ca_pubkey: /etc/ssh-rt-auth/user-ca.pub
+  # TLS 1.3 only; cipher suites are hardcoded. Not tunable here.
+
+ca:
+  # ssh-rt-auth CA endpoints. Wrapper tries them in order on every call.
+  endpoints:
+    - https://ca-1.internal:8443
+    - https://ca-2.internal:8443
+  client_cert: /etc/ssh-rt-auth/wrapper-mtls.crt
+  client_key:  /etc/ssh-rt-auth/wrapper-mtls.key
+  ca_pubkey:   /etc/ssh-rt-auth/server-mtls-ca.pub
+  timeout_seconds: 5
+  # Optional: long-lived emergency cert for use when all CA endpoints
+  # are unreachable. See ca/emergency_cert.md.
+  emergency_cert: /etc/ssh-rt-auth/emergency.cert
+
+inner:
+  # The OpenSSH binary used as the inner sshd. Default: distro package.
+  # Override to pin a specific version.
+  sshd_binary: /usr/sbin/sshd
+  # Wrapper allocates the inner sshd's port dynamically in this range.
+  port_range: [49152, 65535]
+  # NO sshd_config knob here — the inner config is hermetic. See
+  # design/ssh-rt-auth-detailed-wrapper.md §5.2.
+
+users:
+  # Which Unix users the wrapper will drop into. Connections requesting
+  # a username not in this list are denied at the wrapper before
+  # touching the inner sshd. Use ["*"] to allow any (NOT recommended).
+  allowed:
+    - alice
+    - bob
+    - svc-deploy
+
+logging:
+  level: info                    # debug | info | warn | error
+  destination: syslog            # syslog | stderr | file:/path
+  audit_destination: file:/var/log/ssh-rt-auth/wrapper-audit.jsonl
+
+# Optional: per-Unix-user overrides. Rare — most policy lives in the
+# CA, not here.
+user_overrides: {}
+
+# Performance knobs. Defaults are fine for typical deployments.
+performance:
+  # Run inner SSH with Ciphers none. The outer mTLS already provides
+  # confidentiality; setting this true skips a redundant encryption
+  # pass on the inner leg. Useful for high-throughput SFTP/SCP
+  # workloads only. See design/ssh-rt-auth-detailed-wrapper.md §4.
+  inner_cipher_none: false
+  max_concurrent_sessions: 200

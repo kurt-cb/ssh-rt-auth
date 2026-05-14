@@ -35,7 +35,17 @@ Three components:
 - Server identity: via mTLS cert, not hostname. CA identifies server from mTLS handshake.
 - Raw blob forwarding: sshd/shim does not parse identity certs. CA does all parsing.
 - PoC language: Python (AsyncSSH for SSH, Flask for CA, cryptography lib for X.509)
-- Final implementation: C with Mbed TLS (not part of PoC)
+- PoC minimum target: **Alpine + Python**. CA stays Python in production —
+  it runs on operator infrastructure, not constrained endpoints, so the
+  earlier "C/Mbed TLS CA" plan was dropped.
+- Production endpoint (Tier 1): **wrap-and-proxy** — mTLS-terminating wrapper
+  in front of a hermetic, locked-down unmodified OpenSSH. Three planned
+  variants in `wrapper/`:
+  - `wrapper/python/` — PoC implementation, fast iteration, easy to vet
+  - `wrapper/go/` — production port; balances performance with memory safety
+  - `wrapper/alpine/` — minimal C+Mbed TLS or C+wolfSSL for constrained
+    Alpine-only deployments
+  See `design/ssh-rt-auth-detailed-wrapper.md`.
 - No password auth, ever
 - Fail-closed: if CA unreachable, deny (unless emergency cert)
 
@@ -47,6 +57,9 @@ Read these before implementing — they contain the detailed specifications:
 - `docs/ssh-rt-auth-doc-02-ca-design.md` — CA design goals, API overview, enrollment model
 - `docs/ssh-rt-auth-detailed-shim.md` — Shim interface, cache, failover, sshd integration
 - `docs/ssh-rt-auth-detailed-rest-api.md` — Complete REST API spec (all endpoints, all fields)
+- `design/ssh-rt-auth-server-strategy.md` — Three-tier deployment model; wrapper is Tier 1
+- `design/ssh-rt-auth-wrapper-research.md` — Wrap-and-proxy vs greenfield decision; hermetic inner sshd design
+- `design/ssh-rt-auth-v2-enhancements.md` — v2 connection-context schema, reserved cert-extension OIDs, sshd-implementation policy
 - `docs/ssh-rt-auth-detailed-ca-admin.md` — CA internals, enrollment DB schema, cert minting, admin CLI
 
 ## PoC implementation phases
@@ -108,9 +121,16 @@ ssh-rt-auth/
 │   ├── client.py           # mTLS HTTP client for admin API
 │   ├── key_parser.py       # SSH key/cert file parsing
 │   └── formatters.py       # output formatting
-├── server/                 # PoC SSH server (AsyncSSH)
+├── server/                 # PoC SSH server (AsyncSSH) — Tier 2 reference
 │   ├── __init__.py
 │   └── ssh_server.py       # AsyncSSH server with shim integration
+├── openssh/                # AKC entry point for unmodified OpenSSH — Tier 3
+│   ├── __init__.py
+│   └── openssh_shim.py     # AuthorizedKeysCommand helper
+├── wrapper/                # Tier 1 wrap-and-proxy production endpoint
+│   ├── python/             # PoC implementation (next phase)
+│   ├── go/                 # production port (future)
+│   └── alpine/             # minimal C+Mbed TLS or C+wolfSSL (future, Alpine-only)
 ├── tests/                  # tests
 │   ├── test_ca.py
 │   ├── test_shim.py

@@ -1,0 +1,23 @@
+[Unit]
+Description=ssh-rt-auth wrapper (mTLS-authenticated SSH frontend)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+User=_sshrtwrapper
+Group=_sshrtwrapper
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+ExecStart=/usr/sbin/ssh-rt-wrapperd --config /etc/ssh-rt-auth/wrapper.yaml
+Restart=on-failure
+RestartSec=5
+
+# Sandboxing
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=/var/log/ssh-rt-auth /var/lib/ssh-rt-auth
+ProtectHome=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

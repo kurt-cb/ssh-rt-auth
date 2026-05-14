@@ -6,4 +6,5 @@ ADHOC_TEST_ENV.md
 adhoc-env.sh
 tests/lxc/__pycache__
 coverage.xml
+__pycache__
 .coverage

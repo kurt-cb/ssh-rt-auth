@@ -197,15 +197,25 @@ extensions). The arc `1.3.6.1.4.1.55555.1.{8..31}` is **reserved for
 v2** — minted certs may include these critical-or-noncritical extensions
 once the v2 reference CA implements them.
 
-**Enforcement scope:** the v2 extensions in this arc are enforced **only
-by Tier 1 (reference server) and Tier 2 (library integrations)**, per
-[ssh-rt-auth-server-strategy.md](ssh-rt-auth-server-strategy.md). Tier 3
-(OpenSSH compatibility mode) does not enforce them — minted certs sent
-to Tier 3 hosts will simply have their v2 extensions ignored. Policies
-that depend on v2 extensions should therefore be gated on
-`sshd_requirements.patched: required` (§ 5.2) or on a Tier 1 / Tier 2
-server tag in the enrollment DB, so the CA refuses to issue them to
-Tier 3 endpoints in the first place.
+**Enforcement scope:** the v2 extensions in this arc are enforced
+**only by Tier 1 (wrap-and-proxy) and Tier 2 (library integrations)**,
+per [ssh-rt-auth-server-strategy.md](ssh-rt-auth-server-strategy.md).
+Tier 3 (OpenSSH compatibility mode) does not enforce them — minted
+certs sent to Tier 3 hosts will simply have their v2 extensions
+ignored. Policies that depend on v2 extensions should therefore be
+gated on `sshd_requirements.patched: required` (§ 5.2) or on a Tier 1
+/ Tier 2 server tag in the enrollment DB, so the CA refuses to issue
+them to Tier 3 endpoints in the first place.
+
+**Tier 1 enforcement mechanism:** the wrapper translates each v2 OID
+into either (a) an OpenSSH cert critical-option that the inner
+hermetic sshd enforces natively (e.g., `sshrtauth-force-command` → SSH
+cert `force-command`), or (b) a wrapper-side enforcement step the
+inner sshd cannot perform (e.g., `sshrtauth-session-bind` binds to the
+outer mTLS session ID, validated by the wrapper before opening the
+inner SSH leg). The detailed translation table will live in
+[ssh-rt-auth-detailed-wrapper.md](ssh-rt-auth-detailed-wrapper.md)
+(forthcoming).
 
 | OID                                | Name                            | ASN.1                           | Consumes (from §2)                | Critical |
 |------------------------------------|---------------------------------|---------------------------------|-----------------------------------|----------|
