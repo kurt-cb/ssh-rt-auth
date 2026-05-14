@@ -66,6 +66,11 @@ def pytest_configure(config):
         'markers',
         'setup_only: provisioning-only tests (opt-in, no teardown). '
         'Run with `-m setup_only`.')
+    config.addinivalue_line(
+        'markers',
+        'openssh_shim: tests the unmodified-OpenSSH AuthorizedKeysCommand '
+        'shim prototype (opt-in, slower setup). '
+        'Run with `-m openssh_shim`.')
 
 
 def pytest_collection_modifyitems(config, items):
@@ -73,14 +78,20 @@ def pytest_collection_modifyitems(config, items):
                                   reason='LXC not available')
     explicit_marker = config.getoption('-m', default='') or ''
     explicit_setup_only = 'setup_only' in explicit_marker
+    explicit_openssh_shim = 'openssh_shim' in explicit_marker
     skip_setup = pytest.mark.skip(
         reason='setup_only test; run explicitly with -m setup_only')
+    skip_openssh = pytest.mark.skip(
+        reason='openssh_shim test; run explicitly with -m openssh_shim')
     for item in items:
         if item.get_closest_marker('lxc'):
             item.add_marker(skip_lxc)
         if (item.get_closest_marker('setup_only')
                 and not explicit_setup_only):
             item.add_marker(skip_setup)
+        if (item.get_closest_marker('openssh_shim')
+                and not explicit_openssh_shim):
+            item.add_marker(skip_openssh)
 
 
 def pytest_addoption(parser):

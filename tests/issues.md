@@ -293,9 +293,170 @@ Grouped by area. Each entry has:
 
 ---
 
-## 9. Snoopy command-execution logging
+## 9. OpenSSH AuthorizedKeysCommand shim prototype
 
-### 9.1 No coverage of in-container exec() inside test containers
+### 9.1 sshd does not provide the remote IP to `AuthorizedKeysCommand`
+- **Symptom:** CA audit logs show `source_ip: "0.0.0.0"` for every
+  connection routed through `shim/openssh_shim.py`.
+- **Cause:** OpenSSH's `AuthorizedKeysCommand` token list (man
+  sshd_config: %u, %t, %k, %f, %i, %s, %T, %h, %U, %D, %C, %K) has no
+  client-IP token. None of `SSH_CLIENT` / `SSH_CONNECTION` are set in
+  the helper's env during auth (those are populated only after the
+  session starts).
+- **Workaround in the prototype:** `_resolve_source_ip()` scans
+  `/proc/<ppid>/fd/*` for socket inodes and cross-references against
+  `/proc/net/tcp`. **In practice, this didn't work** in our Ubuntu
+  22.04 sshd setup either — the AuthorizedKeysCommand child's parent
+  isn't the sshd holding the client TCP socket (there's a PAM helper or
+  privsep sshd between them).
+- **Implication:** With this shim, source-CIDR policy effectively
+  collapses to "allow all" — set `source_cidrs: ['0.0.0.0/0']` for
+  any policy that's expected to match. The proper fix is a sshd patch
+  exposing the remote address as another `%`-token or via env.
+
+### 9.2 sshd calls `AuthorizedKeysCommand` twice per accepted connection
+- **Symptom:** The CA audit log records **two** `granted` entries with
+  consecutive serial numbers for a single SSH attempt.
+- **Cause:** sshd appears to invoke the command once to ask "is this
+  key authorized?" and again to verify the match before sealing the
+  authentication.
+- **First mitigation attempt:** The shim's in-memory `CertCache` —
+  didn't work, because the OpenSSH shim runs as a fresh subprocess
+  each call. Two invocations = two empty caches.
+- **Fix (deployed):** Added `shim.sqlite_cache.SqliteCertCache`, a
+  persistent SQLite store keyed on `(fingerprint, source_ip)`. The
+  `ShimConfig.cache_backend` setting selects between `memory` (right
+  for the long-lived AsyncSSH server) and `sqlite` (right for the
+  short-lived OpenSSH shim). The OpenSSH shim now auto-promotes its
+  backend to `sqlite` regardless of config so the wrong setting can't
+  be footgunned in. With this in place, the second sshd → shim call
+  hits the cache instead of re-querying the CA; audit log goes from
+  two `granted` rows back to one. Unit-tested with a real subprocess
+  in `tests/test_sqlite_cache.py:test_persistence_across_subprocesses`.
+
+### 9.3 `AuthorizedKeysCommand` is fundamentally yes/no
+- **Symptom:** None — design limitation.
+- **Cause:** sshd only acts on the helper's stdout (key line or empty)
+  + exit code. There's no channel to enforce the X.509 cert's policy
+  extensions (`server-bind`, `channel-policy`, `force-command`,
+  `max-session`, environment vars).
+- **Implication:** The OpenSSH shim is a viable PoC for "should this
+  key be accepted at all", but the channel/command constraints from
+  the CA aren't enforceable through this hook. For full enforcement
+  you still need either:
+  - the AsyncSSH server in `server/ssh_server.py` (PoC path), or
+  - a real sshd patch that calls a richer authorization-module hook
+    (the design's eventual goal).
+
+### 9.4 In-memory cache was the wrong design for short-lived shims
+- **Symptom:** Each OpenSSH `AuthorizedKeysCommand` invocation re-hit
+  the CA from scratch even when an identical authorized cert was still
+  inside its validity window. Doubles CA traffic, doubles audit
+  entries (see 9.2), and adds unnecessary mTLS handshake latency to
+  every login.
+- **Cause:** ``CertCache`` was an LRU dict held on the long-lived
+  Shim instance — fine for the AsyncSSH server but completely broken
+  for any caller where the Shim is constructed per process.
+- **Fix:** ``shim/sqlite_cache.py`` (SQLite, WAL mode, primary key
+  on `(fingerprint, source_ip)`, automatic eviction of expired rows
+  on lookup, LRU-style trimming when over `max_entries`). Subsequent
+  shim invocations within the cert's validity window are now answered
+  from the local DB without any CA call. Unit tests in
+  `tests/test_sqlite_cache.py` cover same-process round trip,
+  expiry-based eviction, cross-process persistence (spawns a real
+  subprocess to write, then reads in the parent), and the LRU cap.
+
+### 9.5 Python-startup + import cost per `AuthorizedKeysCommand` call
+- **Symptom:** Even with SQLite caching eliminating the CA round trip on
+  hot connections, every `AuthorizedKeysCommand` invocation still costs
+  ~250 ms before the cache lookup happens:
+
+  | Cost                                | Time          |
+  |-------------------------------------|---------------|
+  | Python interpreter startup          | 50–80 ms      |
+  | `import cryptography, requests, …`  | 150–200 ms    |
+  | mTLS handshake on cache miss        | 30–60 ms      |
+  | SQLite open + WAL setup             | ~5 ms         |
+  | Authorization decision (cache hit)  | <1 ms         |
+
+  On a box getting 10 logins/sec that's catastrophic. Even at one login
+  per minute, a quarter-second of pure startup is noticeable.
+
+- **Cause:** `AuthorizedKeysCommand` is a fresh subprocess every time;
+  there is no "warm" state. Python is unusually expensive to start
+  cold compared with C or Go.
+
+- **Status:** Acknowledged but not fixed in this PoC; captured as a
+  design note (below).
+
+#### Design note: long-lived authorization daemon
+
+The right shape for production is to split the OpenSSH shim into two
+pieces:
+
+```
+sshd → AuthorizedKeysCommand → ssh-rt-authd-cli  (tiny client, ~5 ms)
+                                       │
+                                       ▼  Unix domain socket
+                              ssh-rt-authd  (long-lived Python daemon)
+                                ├── persistent mTLS session pool to CA
+                                ├── in-memory hot cache (LRU)
+                                └── SqliteCertCache (write-through;
+                                    persists across daemon restarts)
+```
+
+- **Transport:** Unix domain socket at `/run/ssh-rt-auth/authd.sock`
+  with mode 0660, owner `root:sshrt`. Filesystem permissions are the
+  auth — no in-protocol handshake needed.
+- **Wire format:** newline-delimited JSON, one request → one response.
+  ~30 LOC client. Easy to debug with `socat`.
+- **Daemon:** asyncio server, one task per connection, holds a single
+  long-lived `Shim` instance. The existing `SqliteCertCache` becomes a
+  write-through layer behind a small in-memory LRU; a daemon restart
+  warm-starts the cache from disk.
+- **systemd integration:** socket-activated unit so the daemon spawns
+  on first request and survives sshd reloads. Health-check via a `ping`
+  RPC. SIGHUP reloads `shim.yaml` (in particular: the mTLS cert/key,
+  which the daemon now holds in memory continuously rather than reading
+  per call).
+- **Thin client:** can stay in Python (no `cryptography` import; only
+  `socket` + `json` — startup drops to ~50 ms) or move to C/Go for
+  ~3 ms. Python is plenty for v1.
+
+**Trade-offs:**
+
+1. Extra process to monitor and restart. systemd's
+   `Restart=on-failure` handles it cheaply.
+2. The daemon holds the mTLS private key in memory continuously. Per-
+   process model reloads it each call, so rotating the key on disk
+   takes effect on the next login. Daemon mode needs explicit SIGHUP
+   handling for hot reload.
+3. Adds a build artifact (the client). Manageable.
+4. Logs split into daemon + audit + sshd. Manageable.
+
+**Why we didn't do it now:** the PoC's goal is to validate the
+authorization model end-to-end. The per-call model proves the auth
+flow works against unmodified OpenSSH; the daemon is a pure
+performance optimization on the same flow. Building it would require
+a coordinated change to the AsyncSSH server too (it could also reuse
+the daemon and avoid maintaining its own `Shim` state), which expands
+the PoC scope. Tracking as a follow-up; this issue's existence is the
+reminder.
+
+### 9.6 First-attempt import error: `wait_for_ssh_port` not defined
+- **Symptom:** Test collection failed with
+  `ImportError: cannot import name 'wait_for_ssh_port' from 'lxc_helpers'`.
+- **Cause:** I copied the import list from the sshadmin test suite,
+  which had a separate `wait_for_ssh_port` helper. Our `lxc_helpers.py`
+  only has `wait_for_port` (a generic TCP-connect probe).
+- **Fix:** Use `wait_for_port` everywhere — TCP-connect to sshd is the
+  same as TCP-connect to anything else for liveness purposes.
+
+---
+
+## 10. Snoopy command-execution logging
+
+### 10.1 No coverage of in-container exec() inside test containers
 - **Symptom:** When a SSH connection failed it was hard to know *what*
   the AsyncSSH server actually invoked — what shell, what env, which
   `su` syntax.

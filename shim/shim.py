@@ -26,6 +26,7 @@ from cryptography.hazmat.primitives.asymmetric import ec, ed25519, padding, rsa
 from ca.identity_parser import sha256_fingerprint
 from .ca_client import CAClient, CAClientFailedOver
 from .cache import CacheEntry, CertCache
+from .sqlite_cache import SqliteCertCache
 from .config import ShimConfig
 
 
@@ -123,7 +124,21 @@ class Shim:
     def __init__(self, config: ShimConfig):
         self.config = config
         config.validate()
-        self.cache = CertCache(max_entries=config.cache_max_entries)
+        # Pick the cache backend. Long-lived processes (AsyncSSH server)
+        # should keep this in memory; short-lived subprocesses (OpenSSH
+        # AuthorizedKeysCommand shim) should set ``cache.backend: sqlite``
+        # in the shim config so subsequent invocations see prior certs.
+        if config.cache_backend == 'sqlite':
+            self.cache = SqliteCertCache(
+                db_path=config.cache_db_path,
+                max_entries=config.cache_max_entries,
+            )
+        elif config.cache_backend == 'memory':
+            self.cache = CertCache(max_entries=config.cache_max_entries)
+        else:
+            raise ValueError(
+                f'unknown cache backend {config.cache_backend!r}; '
+                'expected "memory" or "sqlite"')
         self.ca_client = CAClient(
             endpoints=config.ca_endpoints,
             mtls_cert=config.mtls_cert,
