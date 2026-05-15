@@ -75,7 +75,7 @@ CA_PORT     = 8443
 # ---------------------------------------------------------------------------
 
 def _gen_ed25519(host_dir: Path, name: str, comment: str) -> dict:
-    from ca.identity_parser import sha256_fingerprint
+    from sshrt.ca.identity_parser import sha256_fingerprint
     priv = host_dir / name
     if priv.exists():
         priv.unlink()
@@ -148,7 +148,7 @@ def test_openssh_shim_end_to_end(request, tmp_path_factory):
     section('Bootstrapping CA')
     lxc_exec(CA_NAME, 'sh', '-c',
              'PYTHONPATH=/app/src python3 -c "'
-             'from ca.cert_minter import bootstrap_ca; '
+             'from sshrt.ca.cert_minter import bootstrap_ca; '
              f"bootstrap_ca('/etc/ssh-rt-auth/ca', "
              f"tls_server_sans=['DNS:localhost','IP:127.0.0.1',"
              f"'IP:{ca_ip}'])\"",
@@ -178,8 +178,8 @@ def test_openssh_shim_end_to_end(request, tmp_path_factory):
               '/etc/ssh-rt-auth/ca-config.yaml')
     push_text(CA_NAME,
               '[Unit]\nDescription=ssh-rt-auth CA\nAfter=network.target\n'
-              '[Service]\nWorkingDirectory=/app\n'
-              'ExecStart=/usr/bin/python3 -m ca.server --config '
+              '[Service]\nWorkingDirectory=/app\nEnvironment="PYTHONPATH=/app/src"\n'
+              'ExecStart=/usr/bin/python3 -m sshrt.ca.server --config '
               '/etc/ssh-rt-auth/ca-config.yaml\nRestart=on-failure\n'
               '[Install]\nWantedBy=multi-user.target\n',
               '/etc/systemd/system/ssh-rt-auth-ca.service')
@@ -198,8 +198,8 @@ def test_openssh_shim_end_to_end(request, tmp_path_factory):
                        check=True, capture_output=True)
     os.chmod(creds_dir / 'bootstrap-admin-key.pem', 0o600)
 
-    from cli.client import CAClient
-    from cli.key_parser import b64_blob, parse_key_text
+    from sshrt.admin.client import CAClient
+    from sshrt.admin.key_parser import b64_blob, parse_key_text
     admin = CAClient(
         base_url=f'https://{ca_ip}:{CA_PORT}',
         admin_cert=str(creds_dir / 'bootstrap-admin-cert.pem'),

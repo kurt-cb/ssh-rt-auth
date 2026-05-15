@@ -1,6 +1,6 @@
 """wrapper.yaml loader and validator.
 
-Mirrors the schema in ``wrapper/config/wrapper.yaml.example``. The loader
+Mirrors the schema in ``config/wrapper.yaml.example``. The loader
 is dataclass-based with explicit field types; ``validate()`` performs
 cross-field checks and on-disk-permission checks for cert/key paths.
 

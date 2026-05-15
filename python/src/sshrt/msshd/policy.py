@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from cryptography import x509
 
 
-log = logging.getLogger('ssh-rt-wrapperd.policy')
+log = logging.getLogger('msshd.policy')
 
 
 # Must match ca/cert_minter.py exactly.

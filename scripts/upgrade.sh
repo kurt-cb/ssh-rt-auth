@@ -40,7 +40,7 @@ set -eu
 # Configuration — operator may override these via env vars before running.
 # ---------------------------------------------------------------------------
 
-WRAPPER_BIN="${WRAPPER_BIN:-/usr/sbin/ssh-rt-wrapperd}"
+WRAPPER_BIN="${WRAPPER_BIN:-/usr/local/bin/msshd}"
 WRAPPER_ADMIN_BIN="${WRAPPER_ADMIN_BIN:-/usr/sbin/ssh-rt-wrapper-admin}"
 WRAPPER_PKG="${WRAPPER_PKG:-/root/ssh-rt-auth-wrapper.tar.gz}"
                 # tarball or .deb/.rpm path; install logic below picks
@@ -223,11 +223,11 @@ EOF
 
     # 5. Enable + start the wrapper service.
     if is_systemd; then
-        service_action enable ssh-rt-wrapperd
-        service_action start  ssh-rt-wrapperd
+        service_action enable msshd
+        service_action start  msshd
     elif command -v rc-service >/dev/null 2>&1; then
-        service_action enable ssh-rt-wrapperd
-        service_action start  ssh-rt-wrapperd
+        service_action enable msshd
+        service_action start  msshd
     else
         warn "no service manager detected — please start the wrapper manually:"
         warn "  $WRAPPER_BIN --config $WRAPPER_CONFIG &"
@@ -266,8 +266,8 @@ cmd_verify_1() {
 
     log "verify-1: wrapper health-checks (fallback mode)"
 
-    if ! service_running ssh-rt-wrapperd; then
-        die "ssh-rt-wrapperd is not running"
+    if ! service_running msshd; then
+        die "msshd is not running"
     fi
 
     if ! ss -ltn 2>/dev/null | grep -q ":${WRAPPER_PORT_INITIAL}\b" && \
@@ -275,7 +275,7 @@ cmd_verify_1() {
         die "nothing listening on port $WRAPPER_PORT_INITIAL"
     fi
 
-    log "ssh-rt-wrapperd is running and bound to port $WRAPPER_PORT_INITIAL"
+    log "msshd is running and bound to port $WRAPPER_PORT_INITIAL"
     log "verify access via:  ssh -p $WRAPPER_PORT_INITIAL <user>@<this-host>"
 
     set_phase 'verified-fallback'
@@ -372,7 +372,7 @@ EOF
         warn "$WRAPPER_ADMIN_BIN not present; skipping pre-flight lint"
     fi
 
-    service_action restart ssh-rt-wrapperd
+    service_action restart msshd
 
     set_phase 'enforced'
 
@@ -409,8 +409,8 @@ cmd_verify_2() {
         warn "current phase is '$(get_phase)', expected 'enforced'"
 
     log "verify-2: confirming CA-enforced wrapper is healthy"
-    if ! service_running ssh-rt-wrapperd; then
-        die "ssh-rt-wrapperd is not running"
+    if ! service_running msshd; then
+        die "msshd is not running"
     fi
     if [ -x "$WRAPPER_ADMIN_BIN" ]; then
         "$WRAPPER_ADMIN_BIN" lint || die "lint failed in enforce mode"
@@ -458,7 +458,7 @@ cmd_cutover() {
         "$WRAPPER_CONFIG"
 
     # 3. Restart wrapper.
-    service_action restart ssh-rt-wrapperd
+    service_action restart msshd
 
     # 4. Disable system sshd from autostart.
     if service_running sshd 2>/dev/null; then service_action disable sshd || true; fi
@@ -497,8 +497,8 @@ cmd_verify_3() {
         warn "current phase is '$(get_phase)', expected 'cutover'"
 
     log "verify-3: confirming wrapper is healthy on port $WRAPPER_PORT_FINAL"
-    if ! service_running ssh-rt-wrapperd; then
-        die "ssh-rt-wrapperd is not running"
+    if ! service_running msshd; then
+        die "msshd is not running"
     fi
     if ! ss -ltn 2>/dev/null | grep -q ":${WRAPPER_PORT_FINAL}\b" && \
        ! netstat -ltn 2>/dev/null | grep -q ":${WRAPPER_PORT_FINAL}\b"; then
@@ -516,7 +516,7 @@ this host. System sshd is stopped and disabled.
 Periodic verification (e.g. via cron, monitoring):
 
   $WRAPPER_ADMIN_BIN lint
-  systemctl is-active ssh-rt-wrapperd
+  systemctl is-active msshd
 
 To roll back at any time: ./upgrade.sh rollback
 
@@ -543,8 +543,8 @@ cmd_rollback() {
     fi
 
     # 2. Stop the wrapper.
-    if service_running ssh-rt-wrapperd; then
-        service_action stop ssh-rt-wrapperd
+    if service_running msshd; then
+        service_action stop msshd
     fi
 
     # 3. If we're past phase 1, restore the original wrapper config (the
@@ -553,7 +553,7 @@ cmd_rollback() {
         installed-fallback|verified-fallback)
             # We installed the wrapper but never went to enforce.
             # Disable the service; leave the config behind for inspection.
-            service_action disable ssh-rt-wrapperd || true
+            service_action disable msshd || true
             ;;
         enforced|verified-enforced|cutover|verified-cutover)
             # Restore the fallback-mode wrapper config from backup, or
@@ -563,7 +563,7 @@ cmd_rollback() {
             if [ -e "$WRAPPER_CONFIG" ]; then
                 sed -i.bak 's|^mode:.*|mode: fallback|' "$WRAPPER_CONFIG"
             fi
-            service_action disable ssh-rt-wrapperd || true
+            service_action disable msshd || true
             ;;
         *)
             log "no wrapper state to roll back from phase '$phase'"
@@ -599,7 +599,7 @@ cmd_status() {
 upgrade.sh status
   current phase:       $(get_phase)
   wrapper binary:      $WRAPPER_BIN $([ -x "$WRAPPER_BIN" ] && echo '(present)' || echo '(MISSING)')
-  wrapper service:     $(service_running ssh-rt-wrapperd && echo 'running' || echo 'not running')
+  wrapper service:     $(service_running msshd && echo 'running' || echo 'not running')
   system sshd:         $(service_running sshd && echo 'running' || service_running ssh && echo 'running' || echo 'not running')
   wrapper config:      $WRAPPER_CONFIG
   backup dir:          $BACKUP_DIR

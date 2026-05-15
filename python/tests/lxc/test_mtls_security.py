@@ -248,7 +248,7 @@ def test_attack_auditor_role_cannot_add_server(lxc_env):
     Auditor role permits read-only ops; server.add must return 403 forbidden.
     """
     banner('Attack: auditor role attempting server.add')
-    from cli.client import CAClient, CAClientError
+    from sshrt.admin.client import CAClient, CAClientError
     superuser = CAClient(
         base_url=lxc_env['ca_url'],
         admin_cert=lxc_env['admin_cert'],

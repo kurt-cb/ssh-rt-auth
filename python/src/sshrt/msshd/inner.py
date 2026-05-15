@@ -35,11 +35,48 @@ from pathlib import Path
 from .config import WrapperConfig
 
 
-log = logging.getLogger('ssh-rt-wrapperd.inner')
+log = logging.getLogger('msshd.inner')
 
 
-_TEMPLATE_PATH = (Path(__file__).resolve().parents[1]
-                  / 'config' / 'sshd_config.template')
+def _find_template() -> Path:
+    """Locate the hermetic sshd_config.template file.
+
+    Checked in priority order:
+      1. ``$SSHRT_SSHD_CONFIG_TEMPLATE`` env var (operator escape hatch).
+      2. ``/etc/ssh-rt-auth/sshd_config.template`` (installed location).
+      3. Walking up from this file, find the nearest ``config/sshd_config.template``.
+         Handles both the development checkout layout (template at the
+         repo root's ``config/``) and the LXC-test push-source layout
+         (template at ``/app/config/``).
+
+    Raises FileNotFoundError if no candidate exists.
+    """
+    candidates = []
+
+    env_override = os.environ.get('SSHRT_SSHD_CONFIG_TEMPLATE')
+    if env_override:
+        candidates.append(Path(env_override))
+
+    candidates.append(Path('/etc/ssh-rt-auth/sshd_config.template'))
+
+    # Walk up from this file's parents looking for `config/sshd_config.template`.
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        cand = parent / 'config' / 'sshd_config.template'
+        candidates.append(cand)
+        # Stop walking once we leave a plausible project root (one of the
+        # parents is named one of these).
+        if parent.name in ('src', 'python', 'ssh-rt-auth'):
+            continue
+        if parent == parent.parent:  # filesystem root
+            break
+
+    for c in candidates:
+        if c.is_file():
+            return c
+    raise FileNotFoundError(
+        f'sshd_config.template not found in any of: '
+        + ', '.join(str(c) for c in candidates))
 
 
 class InnerSshdError(RuntimeError):
@@ -118,7 +155,7 @@ class InnerSshd:
 
         # 4. Render the hermetic config.
         config_path = self.state_dir / 'sshd_config'
-        rendered = _render_template(_TEMPLATE_PATH,
+        rendered = _render_template(_find_template(),
             INNER_PORT=str(self._port),
             INNER_HOST_KEY=str(host_key),
             USER_CA_PUBKEY=str(self.user_ca_pubkey_path),

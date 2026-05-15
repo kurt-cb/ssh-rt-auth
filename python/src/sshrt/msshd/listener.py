@@ -20,7 +20,7 @@ from .config import WrapperConfig
 from .proxy import bidirectional_proxy
 
 
-log = logging.getLogger('ssh-rt-wrapperd.listener')
+log = logging.getLogger('msshd.listener')
 
 
 class FallbackListener:

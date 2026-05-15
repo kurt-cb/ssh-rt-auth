@@ -1,4 +1,4 @@
-"""Smoke test: spawn ssh-rt-wrapperd in fallback mode, drive bytes
+"""Smoke test: spawn msshd in fallback mode, drive bytes
 through it to an in-process echo server, verify round-trip."""
 from __future__ import annotations
 

@@ -35,7 +35,7 @@ from typing import Sequence
 import asyncssh
 
 
-log = logging.getLogger('ssh-rt-wrapperd.userca')
+log = logging.getLogger('msshd.userca')
 
 
 # Per-connection cert default TTL. The CA-issued authz cert's notAfter

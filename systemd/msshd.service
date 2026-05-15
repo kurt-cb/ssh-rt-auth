@@ -1,5 +1,5 @@
 [Unit]
-Description=ssh-rt-auth wrapper (mTLS-authenticated SSH frontend)
+Description=msshd — ssh-rt-auth wrapper (mTLS-authenticated SSH frontend)
 After=network-online.target
 Wants=network-online.target
 
@@ -8,7 +8,7 @@ Type=notify
 User=_sshrtwrapper
 Group=_sshrtwrapper
 AmbientCapabilities=CAP_NET_BIND_SERVICE
-ExecStart=/usr/sbin/ssh-rt-wrapperd --config /etc/ssh-rt-auth/wrapper.yaml
+ExecStart=/usr/local/bin/msshd --config /etc/ssh-rt-auth/wrapper.yaml
 Restart=on-failure
 RestartSec=5
 

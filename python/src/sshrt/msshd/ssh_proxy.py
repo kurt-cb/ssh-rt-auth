@@ -23,7 +23,7 @@ from typing import Optional
 import asyncssh
 
 
-log = logging.getLogger('ssh-rt-wrapperd.ssh_proxy')
+log = logging.getLogger('msshd.ssh_proxy')
 
 
 PROTOCOL_VERSION = 1

@@ -159,7 +159,7 @@ def _generate_user_keys(usernames: list[str], outdir: Path) -> dict[str, _UserKe
         pub_line = (outdir / f'id_{u}.pub').read_text().strip()
         parts = pub_line.split()
         blob = base64.b64decode(parts[1])
-        from ca.identity_parser import sha256_fingerprint
+        from sshrt.ca.identity_parser import sha256_fingerprint
         out[u] = _UserKey(
             username=u, priv_path=str(priv),
             pub_blob=blob, pub_openssh=pub_line,
@@ -245,7 +245,7 @@ def lxc_env(request, tmp_path_factory):
         section('Initializing CA')
         lxc_exec(CA_HOST, 'sh', '-c',
                  'PYTHONPATH=/app python3 -c "'
-                 'from ca.cert_minter import bootstrap_ca; '
+                 'from sshrt.ca.cert_minter import bootstrap_ca; '
                  f"bootstrap_ca('/etc/ssh-rt-auth/ca', "
                  f"tls_server_sans=['DNS:localhost','IP:127.0.0.1',"
                  f"'IP:{ips[CA_HOST]}'])\"",
@@ -277,8 +277,8 @@ def lxc_env(request, tmp_path_factory):
 
         unit = (
             '[Unit]\nDescription=ssh-rt-auth CA\nAfter=network.target\n'
-            '[Service]\nWorkingDirectory=/app\n'
-            'ExecStart=/usr/bin/python3 -m ca.server --config '
+            '[Service]\nWorkingDirectory=/app\nEnvironment="PYTHONPATH=/app/src"\n'
+              'ExecStart=/usr/bin/python3 -m sshrt.ca.server --config '
             '/etc/ssh-rt-auth/ca-config.yaml\nRestart=on-failure\n'
             '[Install]\nWantedBy=multi-user.target\n'
         )
@@ -325,8 +325,8 @@ def lxc_env(request, tmp_path_factory):
 def provisioned_env(lxc_env, scenario, tmp_path_factory):
     """Build the full ssh-rt-auth deployment: enrolled servers/users/policies,
     AsyncSSH server running on every SSH host, ready for matrix testing."""
-    from cli.client import CAClient
-    from cli.key_parser import b64_blob, parse_key_text
+    from sshrt.admin.client import CAClient
+    from sshrt.admin.key_parser import b64_blob, parse_key_text
 
     admin = CAClient(
         base_url=lxc_env['ca_url'],
@@ -484,7 +484,7 @@ def _provision_ssh_host(*, container: str, canonical: str, lxc_env: dict,
 
     # 7. systemd/openrc unit to run the AsyncSSH server.
     server_cmd = (
-        '/usr/bin/python3 -m server.ssh_server '
+        '/usr/bin/python3 -m sshrt.asyncssh_ref.ssh_server '
         '--shim-config /etc/ssh-rt-auth/server/shim.yaml '
         '--host-key /etc/ssh-rt-auth/server/host-key '
         '--users-file /etc/ssh-rt-auth/server/users.allowed '

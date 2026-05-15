@@ -190,7 +190,7 @@ def _keygen_in_container(*, container: str, username: str, tool: str,
     with both ``ssh`` and ``dbclient``. The public-key line is extracted
     with ``dropbearkey -y``.
     """
-    from ca.identity_parser import sha256_fingerprint
+    from sshrt.ca.identity_parser import sha256_fingerprint
 
     _ensure_unix_account(container, username)
     home_ssh = f'/home/{username}/.ssh'
@@ -306,7 +306,7 @@ def _start_asyncssh_server(server: _Server) -> None:
     """systemd (Ubuntu) or nohup (Alpine) to start the AsyncSSH server."""
     c = server.container
     server_cmd = (
-        '/usr/bin/python3 -m server.ssh_server '
+        '/usr/bin/python3 -m sshrt.asyncssh_ref.ssh_server '
         '--shim-config /etc/ssh-rt-auth/server/shim.yaml '
         '--host-key /etc/ssh-rt-auth/server/host-key '
         '--users-file /etc/ssh-rt-auth/server/users.allowed '
@@ -427,8 +427,8 @@ will show the denial reason; tail it on the CA host:
 def test_setup_adhoc_environment(request, tmp_path_factory):
     """Provision the ad-hoc lab. Persists everything; does NOT tear down."""
     from ca import cert_minter
-    from cli.client import CAClient
-    from cli.key_parser import b64_blob, parse_key_text
+    from sshrt.admin.client import CAClient
+    from sshrt.admin.key_parser import b64_blob, parse_key_text
 
     invocation_cwd = Path(os.getcwd()).resolve()
     artifacts_dir  = invocation_cwd / 'adhoc-keys'
@@ -491,7 +491,7 @@ def test_setup_adhoc_environment(request, tmp_path_factory):
     section('Initializing CA')
     lxc_exec(CA_NAME, 'sh', '-c',
              'PYTHONPATH=/app/src python3 -c "'
-             'from ca.cert_minter import bootstrap_ca; '
+             'from sshrt.ca.cert_minter import bootstrap_ca; '
              f"bootstrap_ca('/etc/ssh-rt-auth/ca', "
              f"tls_server_sans=['DNS:localhost','IP:127.0.0.1',"
              f"'IP:{ips[CA_NAME]}'])\"",
@@ -521,8 +521,8 @@ def test_setup_adhoc_environment(request, tmp_path_factory):
               '/etc/ssh-rt-auth/ca-config.yaml')
     push_text(CA_NAME,
               '[Unit]\nDescription=ssh-rt-auth CA\nAfter=network.target\n'
-              '[Service]\nWorkingDirectory=/app\n'
-              'ExecStart=/usr/bin/python3 -m ca.server --config '
+              '[Service]\nWorkingDirectory=/app\nEnvironment="PYTHONPATH=/app/src"\n'
+              'ExecStart=/usr/bin/python3 -m sshrt.ca.server --config '
               '/etc/ssh-rt-auth/ca-config.yaml\nRestart=on-failure\n'
               '[Install]\nWantedBy=multi-user.target\n',
               '/etc/systemd/system/ssh-rt-auth-ca.service')
@@ -967,7 +967,7 @@ def _setup_command_log_section(*, ips: dict, user_keys: dict) -> list[str]:
         '# (executed inside the CA container)',
         'mkdir -p /etc/ssh-rt-auth/ca',
         'python3 -c "',
-        '  from ca.cert_minter import bootstrap_ca',
+        '  from sshrt.ca.cert_minter import bootstrap_ca',
         '  bootstrap_ca(\'/etc/ssh-rt-auth/ca\',',
         '               tls_server_sans=[\'DNS:localhost\',\'IP:127.0.0.1\','
         f'\'IP:$CA_IP\'])"',
@@ -1115,7 +1115,7 @@ def _setup_command_log_section(*, ips: dict, user_keys: dict) -> list[str]:
         'Plus a systemd unit (Ubuntu) or a `nohup`-launched process (Alpine) that runs:',
         '',
         '```',
-        'python3 -m server.ssh_server \\',
+        'python3 -m sshrt.asyncssh_ref.ssh_server \\',
         '   --shim-config /etc/ssh-rt-auth/server/shim.yaml \\',
         '   --host-key    /etc/ssh-rt-auth/server/host-key \\',
         '   --users-file  /etc/ssh-rt-auth/server/users.allowed \\',

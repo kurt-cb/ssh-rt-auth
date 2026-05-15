@@ -63,6 +63,7 @@ Read these before implementing — they contain the detailed specifications:
 - `design/ssh-rt-auth-detailed-wrapper.md` — Implementation blueprint for the Tier 1 wrapper (Python/Go/Alpine variants)
 - `design/ssh-rt-auth-v2-enhancements.md` — v2 connection-context schema, reserved cert-extension OIDs, sshd-implementation policy
 - `design/ssh-rt-auth-phase2-ideas.md` — Deferred ideas (per-connection sshd, smart cards, HTTPS proxy, passkeys, 2FA, …)
+- `design/ssh-rt-auth-dropped-ideas.md` — Things we covered and dropped (greenfield C server, ssh-rt-wrapperd name, MITM SSH outer protocol, …)
 - `docs/ssh-rt-auth-detailed-ca-admin.md` — CA internals, enrollment DB schema, cert minting, admin CLI
 
 ## PoC implementation phases
@@ -169,8 +170,7 @@ ssh-rt-auth/
 ├── scripts/                # operator scripts
 │   └── upgrade.sh                   # host upgrade / install / verify / rollback
 └── systemd/                # service unit files (lang-neutral)
-    ├── ssh-rt-wrapperd.service
-    └── ssh-rt-inner-sshd.service
+    └── msshd.service       # inner sshd is wrapper-supervised, no separate unit
 ```
 
 ## Dependencies

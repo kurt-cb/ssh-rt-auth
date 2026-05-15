@@ -1,10 +1,14 @@
-# ssh-rt-auth-openssh
+# openssh-patches
 
-OpenSSH patches that turn unmodified `sshd` into a first-class ssh-rt-auth
-authorization point. Companion to the
-[ssh-rt-auth](../ssh-rt-auth) PoC.
+OpenSSH patches that make unmodified `sshd` work better as an
+ssh-rt-auth Tier 3 authorization point.
 
-The PoC's `openssh/openssh_shim.py` integration via
+**Note:** these patches now live inside the main ssh-rt-auth repo
+(absorbed during the 2026-05-15 reorg). Their content is unchanged
+from when they lived in the sibling `ssh-rt-auth-openssh/` repo,
+which is documented in the dropped-ideas doc.
+
+The original `openssh/openssh_shim.py` integration via
 `AuthorizedKeysCommand` proved the authorization model works against
 stock OpenSSH, but exposed three structural limits:
 
@@ -16,9 +20,16 @@ stock OpenSSH, but exposed three structural limits:
   X.509 authorization cert's critical extensions (`server-bind`,
   `channel-policy`, `force-command`) or its `notAfter` timestamp.
 
-This repo carries the patch series that fixes all three by adding new
-sshd hooks. Targets upstream OpenSSH-portable; intended for eventual
-upstream submission.
+**Two of the three are addressed by patches in this directory** —
+0001 `SSH_AKC_PHASE` (fixes the double-call from the helper's side)
+and 0002 `%R/%r/%L/%l` tokens (provides the remote-IP and split-domain
+information). The third (cert-extension enforcement) was the original
+0004-0007 series; that's **dropped** now that ssh-rt-auth's Tier 1
+wrapper handles it natively. See `../design/ssh-rt-auth-dropped-ideas.md`.
+
+The two surviving patches target upstream OpenSSH-portable; intended
+for eventual upstream submission. See `openssh_submission_email_*.md`
+in this directory for the draft submission emails.
 
 ## Layout
 

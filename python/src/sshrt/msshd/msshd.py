@@ -1,4 +1,4 @@
-"""ssh-rt-wrapperd — daemon entry point.
+"""msshd — daemon entry point.
 
 Phase 1A: fallback mode. Listens, proxies bytes to a downstream sshd.
 No mTLS, no CA, no cert minting.
@@ -23,7 +23,7 @@ from .config import MODE_ENFORCE, MODE_FALLBACK, WrapperConfig
 from .listener import FallbackListener
 
 
-log = logging.getLogger('ssh-rt-wrapperd')
+log = logging.getLogger('msshd')
 
 
 _LEVELS = {
@@ -146,7 +146,7 @@ async def _run_enforce(cfg: WrapperConfig) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog='ssh-rt-wrapperd')
+    ap = argparse.ArgumentParser(prog='msshd')
     ap.add_argument('--config', default='/etc/ssh-rt-auth/wrapper.yaml',
                     help='path to wrapper.yaml')
     args = ap.parse_args(argv)
@@ -163,7 +163,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     _setup_logging(cfg)
-    log.info('ssh-rt-wrapperd starting (mode=%s)', cfg.mode)
+    log.info('msshd starting (mode=%s)', cfg.mode)
 
     try:
         return asyncio.run(_run(cfg))

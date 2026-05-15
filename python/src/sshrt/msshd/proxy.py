@@ -19,7 +19,7 @@ import logging
 from typing import Awaitable, Callable
 
 
-log = logging.getLogger('ssh-rt-wrapperd.proxy')
+log = logging.getLogger('msshd.proxy')
 
 
 # Buffer size for byte-shuffling. 64K is the practical maximum for most

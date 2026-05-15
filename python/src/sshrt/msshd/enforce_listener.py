@@ -46,7 +46,7 @@ from .policy import (KNOWN_CRITICAL, parse_cert_policy,
 from .userca import UserCA
 
 
-log = logging.getLogger('ssh-rt-wrapperd.enforce')
+log = logging.getLogger('msshd.enforce')
 
 
 class EnforceListener:

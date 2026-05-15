@@ -27,7 +27,7 @@ from sshrt.shim.ca_client import (AuthorizeResult, CAClient, CAClientFailedOver)
 from .config import WrapperConfig
 
 
-log = logging.getLogger('ssh-rt-wrapperd.ca')
+log = logging.getLogger('msshd.ca')
 
 
 @dataclass

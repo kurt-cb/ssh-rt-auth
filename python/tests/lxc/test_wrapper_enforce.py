@@ -3,7 +3,7 @@
 Provisions:
 
   - One CA container — runs ``ca.server`` over mTLS.
-  - One wrapper-target container — runs ``ssh-rt-wrapperd`` in
+  - One wrapper-target container — runs ``msshd`` in
     ``enforce`` mode, with a hermetic inner sshd that the wrapper
     spawns and owns.
 
@@ -240,7 +240,7 @@ def test_wrapper_enforce_end_to_end(request, tmp_path_factory):
     section('Bootstrapping CA')
     lxc_exec(CA_NAME, 'sh', '-c',
              'PYTHONPATH=/app/src python3 -c "'
-             'from ca.cert_minter import bootstrap_ca; '
+             'from sshrt.ca.cert_minter import bootstrap_ca; '
              f"bootstrap_ca('/etc/ssh-rt-auth/ca', "
              f"tls_server_sans=['DNS:localhost','IP:127.0.0.1','IP:{ca_ip}'])"
              '"', timeout=120)
@@ -270,8 +270,8 @@ def test_wrapper_enforce_end_to_end(request, tmp_path_factory):
               '/etc/ssh-rt-auth/ca-config.yaml')
     push_text(CA_NAME,
               '[Unit]\nDescription=ssh-rt-auth CA\nAfter=network.target\n'
-              '[Service]\nWorkingDirectory=/app\n'
-              'ExecStart=/usr/bin/python3 -m ca.server --config '
+              '[Service]\nWorkingDirectory=/app\nEnvironment="PYTHONPATH=/app/src"\n'
+              'ExecStart=/usr/bin/python3 -m sshrt.ca.server --config '
               '/etc/ssh-rt-auth/ca-config.yaml\nRestart=on-failure\n'
               '[Install]\nWantedBy=multi-user.target\n',
               '/etc/systemd/system/ssh-rt-auth-ca.service')
@@ -290,7 +290,7 @@ def test_wrapper_enforce_end_to_end(request, tmp_path_factory):
                        check=True, capture_output=True)
     os.chmod(creds_dir / 'bootstrap-admin-key.pem', 0o600)
 
-    from cli.client import CAClient
+    from sshrt.admin.client import CAClient
     admin = CAClient(
         base_url=f'https://{ca_ip}:{CA_PORT}',
         admin_cert=str(creds_dir / 'bootstrap-admin-cert.pem'),
@@ -412,17 +412,17 @@ def test_wrapper_enforce_end_to_end(request, tmp_path_factory):
               'Restart=on-failure\n'
               'StandardError=journal\n'
               '[Install]\nWantedBy=multi-user.target\n',
-              '/etc/systemd/system/ssh-rt-wrapperd.service')
+              '/etc/systemd/system/msshd.service')
 
     # ---- 6. Start the wrapper ---------------------------------------------
     section('Starting wrapper')
     lxc_exec(TARGET_NAME, 'systemctl', 'daemon-reload')
-    lxc_exec(TARGET_NAME, 'systemctl', 'start', 'ssh-rt-wrapperd')
+    lxc_exec(TARGET_NAME, 'systemctl', 'start', 'msshd')
     try:
         wait_for_port(TARGET_NAME, WRAPPER_PORT, max_wait=30)
     except Exception:
         # Dump the journal so we can see why startup failed.
-        rj = lxc_exec(TARGET_NAME, 'journalctl', '-u', 'ssh-rt-wrapperd',
+        rj = lxc_exec(TARGET_NAME, 'journalctl', '-u', 'msshd',
                       '--no-pager', '-n', '100', check=False)
         print('--- wrapper journal ---', file=sys.stderr)
         print(rj.stdout or '', file=sys.stderr)
@@ -449,7 +449,7 @@ def test_wrapper_enforce_end_to_end(request, tmp_path_factory):
 
     if r.returncode != 0 or 'alice' not in (r.stdout or ''):
         # Dump the wrapper journal to help debug.
-        rj = lxc_exec(TARGET_NAME, 'journalctl', '-u', 'ssh-rt-wrapperd',
+        rj = lxc_exec(TARGET_NAME, 'journalctl', '-u', 'msshd',
                       '--no-pager', '-n', '200', check=False)
         print('--- wrapper journal ---', file=sys.stderr)
         print(rj.stdout or '', file=sys.stderr)
