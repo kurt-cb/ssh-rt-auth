@@ -40,11 +40,12 @@ Three components:
   earlier "C/Mbed TLS CA" plan was dropped.
 - Production endpoint (Tier 1): **wrap-and-proxy** — mTLS-terminating wrapper
   in front of a hermetic, locked-down unmodified OpenSSH. Three planned
-  variants in `wrapper/`:
-  - `python/src/sshrt/msshd/` — PoC implementation, fast iteration, easy to vet
-  - `wrapper/go/` — production port; balances performance with memory safety
-  - `wrapper/alpine/` — minimal C+Mbed TLS or C+wolfSSL for constrained
-    Alpine-only deployments
+  language variants (top-level directories — no language mixing):
+  - `python/src/sshrt/msshd/` — PoC implementation (Phase 1 complete).
+  - `c/` — minimal C+Mbed TLS or C+wolfSSL for constrained Alpine-only
+    deployments. Implementation order: **C before Go** (per operator
+    preference).
+  - `go/` — production port.
   See `design/ssh-rt-auth-detailed-wrapper.md`.
 - No password auth, ever
 - Fail-closed: if CA unreachable, deny (unless emergency cert)

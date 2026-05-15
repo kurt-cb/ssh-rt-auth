@@ -10,7 +10,7 @@ OpenSSH.
 
 **Recommendation:** Adopt **wrap-and-proxy** as Tier 1. Greenfield
 server fully dropped. (Revised 2026-05-14 after the decision to also
-ship a `wrapper/alpine/` minimal C variant, which covers the
+ship a `c/` minimal C variant, which covers the
 constrained-deployment use case that originally motivated the
 greenfield fallback.)
 
@@ -397,7 +397,7 @@ Updated [strategy.md](ssh-rt-auth-server-strategy.md) tier model:
 | 2    | Library-based SSH server integrations (AsyncSSH shipped; Go, libssh, MINA, Russh planned v2+) | **Still supported.** |
 | 3    | OpenSSH compatibility mode (AKC + patches 0002 / 0003)       | **Still supported**, for orgs that can't deploy the wrapper. (0002b dropped post-decision — subsumed by wrapper.) |
 
-The `wrapper/alpine/` C variant covers the constrained-deployment use
+The `c/` C variant covers the constrained-deployment use
 case that originally motivated holding a greenfield-server fallback.
 Greenfield is no longer reserved.
 

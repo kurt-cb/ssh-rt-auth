@@ -39,10 +39,10 @@ established by Smallstep, Teleport's agentless mode, and Boundary.
 - **`python/src/sshrt/msshd/`** — PoC implementation. Fast iteration, easy to
   vet against the existing PoC test suite. Performance is acceptable
   for non-busy hosts.
-- **`wrapper/go/`** — production port of the vetted Python design.
+- **`go/`** — production port of the vetted Python design.
   Balances throughput with memory safety. The default production
   target.
-- **`wrapper/alpine/`** — minimal C+Mbed TLS or C+wolfSSL
+- **`c/`** — minimal C+Mbed TLS or C+wolfSSL
   implementation for constrained Alpine-only deployments. Smallest
   footprint, hardest to audit; opt-in.
 
@@ -50,7 +50,7 @@ The three variants share the wire protocol, config schema, and CA
 contract, so a single test suite verifies all three.
 
 The earlier "C/Mbed TLS greenfield server" idea is **fully dropped**.
-`wrapper/alpine/` covers the constrained-deployment use case without
+`c/` covers the constrained-deployment use case without
 us having to own the SSH protocol.
 
 **OpenSSH's full constraint-enforcement patches (the original 0004–0007
@@ -135,8 +135,8 @@ Each row links to its integration doc (forthcoming).
 | Server / library                | Category    | Tier  | Notes                                              |
 |---------------------------------|-------------|-------|----------------------------------------------------|
 | ssh-rt-auth wrapper (`python/src/sshrt/msshd/`) | Daemon | 1 — PoC | Python implementation; inner sshd is unmodified OpenSSH; full feature set; see [detailed-wrapper.md](ssh-rt-auth-detailed-wrapper.md) |
-| ssh-rt-auth wrapper (`wrapper/go/`)     | Daemon | 1 — production | Go port of the vetted Python design; production default |
-| ssh-rt-auth wrapper (`wrapper/alpine/`) | Daemon | 1 — Alpine minimal | C+Mbed TLS or C+wolfSSL; smallest footprint; Alpine-only |
+| ssh-rt-auth wrapper (`go/`)     | Daemon | 1 — production | Go port of the vetted Python design; production default |
+| ssh-rt-auth wrapper (`c/`) | Daemon | 1 — Alpine minimal | C+Mbed TLS or C+wolfSSL; smallest footprint; Alpine-only |
 | AsyncSSH (Python)               | Library     | 2     | Already integrated in `server/ssh_server.py`       |
 | golang.org/x/crypto/ssh         | Library     | 2     | Planned — large cloud-bastion footprint            |
 | libssh (server mode, C)         | Library     | 2     | Planned — appliances, embedded                     |
@@ -229,7 +229,7 @@ open questions from wrapper-research § 11:
 Should land before any wrapper code is written.
 
 The earlier "C + Mbed TLS greenfield server" design has been fully
-dropped — the `wrapper/alpine/` variant (C + Mbed TLS or wolfSSL on top
+dropped — the `c/` variant (C + Mbed TLS or wolfSSL on top
 of unmodified OpenSSH) covers the constrained-deployment use case
 without us having to own the SSH protocol.
 

@@ -45,15 +45,15 @@ schema.** Each variant lives in its own subfolder under `wrapper/`:
 | Variant            | Role            | Why                                                                                  |
 |--------------------|------------------|--------------------------------------------------------------------------------------|
 | `python/src/sshrt/msshd/`  | PoC              | Fast iteration; reuses the PoC's shim/CA machinery directly; easy to vet against the existing test suite. Performance acceptable for non-busy hosts. |
-| `wrapper/go/`      | Production       | Memory-safe, single static binary, easy cross-compile. The default production target after the Python PoC is vetted. `golang.org/x/crypto/ssh` is the SSH client/server library; Teleport's agentless-OpenSSH integration is a working reference. |
-| `wrapper/alpine/`  | Constrained / minimal | C + Mbed TLS or C + wolfSSL. Smallest footprint; Alpine-only; opt-in for embedded / appliance use cases where Go's runtime is unwanted. |
+| `go/`      | Production       | Memory-safe, single static binary, easy cross-compile. The default production target after the Python PoC is vetted. `golang.org/x/crypto/ssh` is the SSH client/server library; Teleport's agentless-OpenSSH integration is a working reference. |
+| `c/`  | Constrained / minimal | C + Mbed TLS or C + wolfSSL. Smallest footprint; Alpine-only; opt-in for embedded / appliance use cases where Go's runtime is unwanted. |
 
 **Implementation order:** Python first → vet against PoC tests → Go
 port → C-minimal port. The three share wire protocol, config schema,
 and CA contract so the same integration test suite verifies all three.
 
 The earlier "greenfield C/Mbed TLS server" plan is dropped —
-`wrapper/alpine/` covers the constrained-deployment use case without
+`c/` covers the constrained-deployment use case without
 us having to own the SSH protocol.
 
 ### 2.1 Layout within the main repo
@@ -95,10 +95,10 @@ ssh-rt-auth/                       # this repo
 
 ### 2.2 Go variant layout (for reference)
 
-When `wrapper/go/` is implemented:
+When `go/` is implemented:
 
 ```
-wrapper/go/
+go/
 ├── go.mod
 ├── cmd/
 │   ├── ssh-rt-wrapperd/           # the daemon

@@ -145,59 +145,81 @@ bottleneck at burst-login time. Worth measuring before committing.
 
 ---
 
-## 3. Split `wrapper/<lang>/` into `wrapper/client/<lang>` + `wrapper/server/<lang>`
+## 3. Client / server split — **mostly done; common-protocol piece remains**
 
-**Status:** Worth doing before the Go port starts.
+**Status:** Substantially superseded by the 2026-05-15 project reorg.
+The top-level language directories (`python/`, `go/`, `c/`) replaced
+the original `wrapper/<lang>/` shape. Each language tree now owns the
+full client+server+CA implementation. The remaining piece is the
+**shared protocol module** described below.
 
-### Idea
+### What's done
 
-Today `python/src/sshrt/msshd/` contains both `wrapperd` (server) and `mssh`
-(client). They're built together, packaged together, shipped together.
-But operationally they live on completely different hosts (server runs
-on bastion-class hosts; client runs on user laptops).
+The reorg established:
 
-Proposed layout:
+- `python/src/sshrt/msshd/` — wrapper server (Python).
+- `python/src/sshrt/mssh.py` — wrapper client (Python).
+- `python/src/sshrt/ca/`, `admin/`, `shim/` — supporting Python pieces.
+- `go/` and `c/` skeleton directories with READMEs documenting the
+  same layout per language.
+
+Operators can already package and update client and server independently
+within Python (the client is a single module, the server is a
+sub-package). The client doesn't pull in server dependencies at
+runtime because `mssh` doesn't import from `msshd/`.
+
+### What still remains: a shared protocol module
+
+The v1 outer-protocol frame format (JSON header + raw bytes) is
+implemented twice today:
+
+- `python/src/sshrt/mssh.py:build_header()` / `parse_ack()`
+- `python/src/sshrt/msshd/ssh_proxy.py:_read_header_line()` / `_write_ack()`
+
+These two implementations have to stay byte-for-byte compatible
+forever. A drift-detection bug between them would silently break
+authentication. Today the test suite catches it because both are
+exercised end-to-end, but with more variants (Go client + Python
+server, C client + Go server, etc.) the combinatorics get ugly.
+
+**Proposed:** consolidate the frame definitions into a per-language
+`common/` module:
 
 ```
-wrapper/
-├── server/
-│   ├── python/      # PoC server (today's python/src/sshrt/msshd/msshd.py etc.)
-│   ├── go/          # production server
-│   └── alpine/      # minimal C server
-├── client/
-│   ├── python/      # PoC mssh (today's python/src/sshrt/mssh.py)
-│   ├── go/          # production mssh
-│   └── alpine/      # minimal C mssh (optional — go client is probably the right choice for distribution)
-└── common/
-    └── protocol/    # outer-protocol-v1 frame definitions, shared across both sides
-        ├── python/
-        └── go/
+python/src/sshrt/common/
+├── __init__.py
+└── protocol.py     # PROTOCOL_VERSION, build_header, parse_header,
+                    # build_ack, parse_ack
 ```
 
-`wrapper/common/protocol/` holds:
-- The v1 JSON header schema (in machine-readable form — could be a
-  shared `.proto`-ish file, or just doc + parallel impls).
-- Critical-option translation tables.
-- Shared cert-validation primitives.
+Both `mssh.py` and `msshd/ssh_proxy.py` import from
+`sshrt.common.protocol`. Drift becomes impossible because there's
+one implementation.
 
-### Wins
+Mirror for `go/` and `c/` when they exist:
 
-- Operators can package and update client and server independently.
-- Client doesn't pull in server dependencies (asyncssh, the
-  hermetic-sshd machinery, etc.).
-- Cross-language consistency comes from `common/`, not from porting
-  code twice.
+- `go/internal/protocol/` — Go package, same frame format.
+- `c/common/protocol.c` — C functions, same frame format.
 
-### Cons
-
-- One-time directory move. Touches setup.py entry points and ~10
-  test imports.
+Cross-language wire compatibility comes from **a single source of
+truth in a spec doc** ([detailed-wrapper.md §3](ssh-rt-auth-detailed-wrapper.md))
+plus per-language unit tests that round-trip canonical encodings.
+Consider adding a `protocol/conformance.json` with golden vectors
+that every language's tests must produce identical output for.
 
 ### LOC estimate
 
-~half a day of mechanical moves. Could be a single PR if scheduled
-before `wrapper/go/` work starts (saves the equivalent reshuffling
-in Go).
+~half a day for Python (extract two ~30-LOC helpers into a shared
+module, update two import sites, add a unit test). Negligible for
+future language ports — they just import from their own
+`common/protocol`.
+
+### Why this isn't urgent
+
+Today there are only two implementations (both Python) and they're
+small. The drift risk is real but the cost is also real. Wait until
+either (a) the Go port starts, or (b) the protocol gains a new
+revision that has to land in both sides.
 
 ---
 
@@ -590,9 +612,9 @@ Zero code, ~1500 lines of operator-facing markdown. Should live as
          └─────────────────────────┘
 
    ┌──────────────────────┐   ┌──────────────────────┐
-   │ 1. Per-connection    │   │ 3. wrapper/client/   │
-   │    ephemeral sshd    │   │    + wrapper/server/ │
-   │  (Phase 2 priority)  │   │   (do before Go port)│
+   │ 1. Per-connection    │   │ 3. Shared protocol   │
+   │    ephemeral sshd    │   │    module (drift     │
+   │  (Phase 2 priority)  │   │    prevention)       │
    └──────────────────────┘   └──────────────────────┘
 
    ┌──────────────────────┐   ┌──────────────────────┐
