@@ -1,0 +1,16 @@
+# patches/series — read by build.sh.
+# Each non-comment line is a patch filename (or glob) relative to patches/.
+#
+# Apply order matches git history order. The file numbering (0001, 0002)
+# is what `git format-patch V_9_9_P1..HEAD` produced. The conceptual
+# numbering in NOTES.md is different because design-doc names predate
+# implementation order:
+#
+#   patches/0001-Set-SSH_AKC_PHASE...        ← NOTES.md calls this "0003"
+#   patches/0002-Add-connection-endpoint...  ← NOTES.md calls this "0002"
+#
+# Both are valid; we keep file numbering monotonic with git history for
+# build clarity.
+
+0001-Set-SSH_AKC_PHASE-env-var-on-AuthorizedKeysCommand-c.patch
+0002-Add-connection-endpoint-tokens-to-AuthorizedKeysComm.patch

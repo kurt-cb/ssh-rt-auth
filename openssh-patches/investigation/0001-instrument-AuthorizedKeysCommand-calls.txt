@@ -1,0 +1,60 @@
+PURPOSE — confirm "called twice" hypothesis empirically before patching.
+
+This is a placeholder: the real patch needs to be authored against the
+openssh-portable submodule once it's checked out. Use the workflow
+below.
+
+────────────────────────────────────────────────────────────────────────
+HOW TO AUTHOR THE INVESTIGATION PATCH
+────────────────────────────────────────────────────────────────────────
+
+# 1. Check out openssh-portable in the parent directory (from this repo's root):
+git submodule update --init
+git -C openssh-portable checkout V_9_9_P1   # or whatever tag
+
+# 2. Find the function that spawns AuthorizedKeysCommand:
+grep -rn 'AuthorizedKeysCommand' openssh-portable/*.c | grep -i exec
+
+# Typically: auth-options.c or auth.c, function `subprocess()` or
+# `subprocess_execve()`. Inspect to confirm there are two distinct call
+# sites — one in the "enumerate candidate keys" path, one in "verify".
+
+# 3. Add stderr markers AT THE TOP of the spawn function and at each
+# call site, e.g.:
+
+#   --- a/auth-options.c
+#   +++ b/auth-options.c
+#   @@ ... subprocess() {
+#   +    fprintf(stderr, "[AKC] spawn: caller=%s user=%s key-len=%zu\n",
+#   +            caller_tag, runas_user, key ? strlen(key) : 0);
+
+# 4. At each call site, pass a distinct `caller_tag` string ("search"
+# vs "verify") and propagate it through. The minimum information needed:
+# which call site fired, in what order.
+
+# 5. Build and run:
+./build.sh --clean --apply-investigation
+sudo install -m 755 openssh-portable/sshd /usr/local/sbin/sshd-patched
+
+# Then in a separate shell:
+sudo /usr/local/sbin/sshd-patched -D -d -p 2244 \
+     -h /etc/ssh/ssh_host_ed25519_key 2>&1 | tee /tmp/sshd-akc-trace.log
+
+# From a client:
+ssh -p 2244 -i ~/.ssh/some_key alice@host echo OK
+
+# Inspect /tmp/sshd-akc-trace.log for [AKC] lines.
+
+# 6. Export the patch back here:
+git -C openssh-portable diff > investigation/0001-instrument-AuthorizedKeysCommand-calls.patch
+
+# 7. Reset the submodule so the next build doesn't carry stale work:
+git -C openssh-portable reset --hard HEAD
+
+────────────────────────────────────────────────────────────────────────
+EXPECTED OUTCOME
+────────────────────────────────────────────────────────────────────────
+
+Two [AKC] log lines per accepted connection, with distinct `caller_tag`
+values. That confirms the hypothesis and tells us where to wire the
+SSH_AKC_PHASE env var (patch 0003).

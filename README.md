@@ -18,18 +18,31 @@ network; stolen keys can't trigger authorization.
 
 ```
 ssh-rt-auth/
-├── ca/                CA — issues short-lived X.509 authz certs
-├── cli/               ssh-rt-admin — enroll servers, users, policies
-├── shim/              authorization shim — server-side query to CA over mTLS
-├── server/            AsyncSSH reference SSH server (Tier 2)
-├── openssh/           AuthorizedKeysCommand entry point (Tier 3)
-├── wrapper/           Tier 1 production endpoint (next phase)
-│   ├── python/        PoC
-│   ├── go/            production port
-│   └── alpine/        minimal C+Mbed TLS / wolfSSL (Alpine-only)
-├── tests/             host + LXC integration tests
-└── design/            design docs
+├── python/                      # Python implementation (PoC + Tier 1 wrapper)
+│   ├── setup.py + pytest.ini
+│   ├── src/sshrt/
+│   │   ├── ca/                  # CA — issues short-lived X.509 authz certs
+│   │   ├── admin/               # ssh-rt-admin CLI (enroll servers/users/policies)
+│   │   ├── shim/                # authorization shim (server-side CA query over mTLS)
+│   │   ├── asyncssh_ref/        # Tier 2 AsyncSSH reference SSH server
+│   │   ├── akc_shim/            # Tier 3 AuthorizedKeysCommand entry point
+│   │   ├── msshd/               # Tier 1 wrapper daemon
+│   │   └── mssh.py              # Tier 1 client CLI
+│   └── tests/                   # host + LXC integration tests
+├── go/                          # future — full Go impl across the trio
+├── c/                           # future — minimal C for Alpine
+├── openssh-patches/             # OpenSSH upstream-targeted patches (Tier 3 only)
+├── config/                      # operator-facing config examples (lang-neutral)
+├── scripts/upgrade.sh           # host upgrade / install / verify / rollback
+├── systemd/                     # service unit files (lang-neutral)
+├── design/                      # design docs
+└── docs/                        # operator-facing docs (overview, REST API, …)
 ```
+
+**No language-mixing in production builds.** Each language directory
+(`python/`, `go/`, `c/`) ships its own client/server/CA implementation.
+Operator-facing artifacts (config, scripts, systemd, openssh-patches)
+live at the repo root and are language-neutral.
 
 ---
 
@@ -51,42 +64,41 @@ for the full strategy.
 The Proof-of-Concept implements **Tiers 2 and 3 end-to-end**, with the
 **CA, shim, admin CLI, and full test suite**.
 
-- **`ca/`** — CA server: Flask + mTLS, issues short-lived X.509 authz
-  certs with policy extensions. Enrollment DB in YAML.
-- **`cli/`** — `ssh-rt-admin` CLI: enroll servers, users, admins, keys,
-  policies. Role-based access control.
-- **`shim/`** — Authorization shim called by sshd or library-based
-  servers. mTLS to CA, response validation, SQLite cache for
-  short-lived AKC subprocesses.
-- **`server/`** — Reference Tier 2 SSH server (AsyncSSH) that wires
-  the shim into `validate_public_key`. End-to-end working today.
-- **`openssh/`** — Tier 3 entry point: `AuthorizedKeysCommand`
-  helper that calls the shim. Works against unmodified `sshd`.
-- **`tests/`** — 79 host unit tests + 24 LXC integration tests. Covers
-  matrix authorization, mTLS attacks on the CA, audit-log coverage,
-  emergency-cert fallback, wildcard policies, and more.
-
-**The wrapper (Tier 1) is designed but not yet implemented.** See
-[wrapper/README.md](wrapper/README.md).
+- **`python/src/sshrt/ca/`** — CA server: Flask + mTLS, issues
+  short-lived X.509 authz certs with policy extensions.
+- **`python/src/sshrt/admin/`** — `ssh-rt-admin` CLI: enroll servers,
+  users, admins, keys, policies. Role-based access control.
+- **`python/src/sshrt/shim/`** — Authorization shim called by sshd or
+  library-based servers. mTLS to CA, response validation, SQLite cache.
+- **`python/src/sshrt/asyncssh_ref/`** — Reference Tier 2 SSH server
+  (AsyncSSH). End-to-end working.
+- **`python/src/sshrt/akc_shim/`** — Tier 3 entry point: stock
+  `AuthorizedKeysCommand` helper that calls the shim.
+- **`python/src/sshrt/msshd/`** — Tier 1 wrapper daemon: mTLS-terminating
+  outer listener, CA call, OpenSSH cert minting, hermetic inner sshd.
+- **`python/src/sshrt/mssh.py`** — Tier 1 client CLI (pure-Python TLS
+  client, JSON-framed outer protocol).
+- **`python/tests/`** — host + LXC integration tests.
 
 ---
 
 ## Running the PoC
 
 ```bash
-pip install -r requirements.txt
+# Install editable (older venvs may need: pip install --no-build-isolation -e ./python)
+pip install -e ./python
 
 # Bootstrap a CA
-python -m cli.main init --ca-dir /tmp/myca
+ssh-rt-admin init --ca-dir /tmp/myca
 
 # Run host tests
-pytest tests -m "not lxc"
+cd python && pytest tests -m "not lxc"
 
 # Run LXC integration tests (needs lxc/lxd)
-pytest tests/lxc -m lxc
+cd python && pytest tests/lxc -m lxc
 
 # Run the ad-hoc test environment (5 LXC containers, "real" lab setup)
-pytest tests/lxc/test_setup_only.py -v -m setup_only
+cd python && pytest tests/lxc/test_setup_only.py -v -m setup_only
 # Then read ADHOC_TEST_ENV.md for what to do with it.
 ```
 
@@ -120,24 +132,24 @@ Deeper:
 
 Operational diary:
 
-- **[tests/overview.md](tests/overview.md)** — what every test verifies
-- **[tests/issues.md](tests/issues.md)** — running list of bugs hit
-  during development and how each was fixed
+- **[python/tests/overview.md](python/tests/overview.md)** — what every test verifies
+- **[python/tests/issues.md](python/tests/issues.md)** — running list of bugs hit during development and how each was fixed
 
 ---
 
-## Related repos
+## OpenSSH upstream patches
 
-- **[../ssh-rt-auth-openssh/](../ssh-rt-auth-openssh/)** — small upstream
-  OpenSSH patches for the Tier 3 compatibility path (`%R`/`%L`/etc.
-  tokens; `SSH_AKC_PHASE` env var). Independent from the wrapper.
+Two small patches (`%R %r %L %l` tokens + `SSH_AKC_PHASE` env var)
+live at [openssh-patches/](openssh-patches/). Useful to any
+`AuthorizedKeysCommand` helper (LDAP, Vault, IAM bridges, this
+project's Tier 3 path). Independent of the Tier 1 wrapper.
 
 ---
 
 ## Project status
 
-**PoC: complete.** Tiers 2 and 3 are functionally implemented and
-tested. The wrap-and-proxy Tier 1 wrapper is designed
-([wrapper/](wrapper/)) and is the next phase of work.
+**PoC + Tier 1 Python wrapper: complete and tested end-to-end.**
+Future language ports (`go/`, `c/`) are deferred until Phase 2
+features stabilize.
 
 **Author:** Kurt Godwin (github.com/kurt-cb)

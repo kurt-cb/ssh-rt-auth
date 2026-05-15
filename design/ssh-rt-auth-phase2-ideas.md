@@ -50,7 +50,7 @@ thread, no monitor process for us to manage.
 ### Wins
 
 - **Native enforcement of every policy extension OpenSSH can express.**
-  `wrapper.python.policy.translate_to_inner_cert_kwargs()` shrinks to
+  `sshrt.msshd.policy.translate_to_inner_cert_kwargs()` shrinks to
   one line (or disappears). The "what does the wrapper enforce vs
   what does OpenSSH enforce" boundary moves entirely into OpenSSH.
 - **Per-session resource isolation.** A bug in one ForceCommand, a
@@ -151,7 +151,7 @@ bottleneck at burst-login time. Worth measuring before committing.
 
 ### Idea
 
-Today `wrapper/python/` contains both `wrapperd` (server) and `mssh`
+Today `python/src/sshrt/msshd/` contains both `wrapperd` (server) and `mssh`
 (client). They're built together, packaged together, shipped together.
 But operationally they live on completely different hosts (server runs
 on bastion-class hosts; client runs on user laptops).
@@ -161,11 +161,11 @@ Proposed layout:
 ```
 wrapper/
 ├── server/
-│   ├── python/      # PoC server (today's wrapper/python/wrapperd.py etc.)
+│   ├── python/      # PoC server (today's python/src/sshrt/msshd/msshd.py etc.)
 │   ├── go/          # production server
 │   └── alpine/      # minimal C server
 ├── client/
-│   ├── python/      # PoC mssh (today's wrapper/python/mssh.py)
+│   ├── python/      # PoC mssh (today's python/src/sshrt/mssh.py)
 │   ├── go/          # production mssh
 │   └── alpine/      # minimal C mssh (optional — go client is probably the right choice for distribution)
 └── common/
@@ -488,7 +488,7 @@ Day 31: User notices ssh no longer works; rm -rf ~/.ssh/.
 The point: **existing SSH stays operational the entire time.** No
 flag day. mssh runs side-by-side until the user is comfortable.
 
-This aligns with [wrapper/scripts/upgrade.sh](../wrapper/scripts/upgrade.sh)'s
+This aligns with [scripts/upgrade.sh](../scripts/upgrade.sh)'s
 server-side phased upgrade — both ends do incremental, verify-as-you-go
 migration.
 
@@ -524,7 +524,7 @@ renderer for the config file.
 
 The technical pieces for incremental migration already exist:
 
-- Server side: [wrapper/scripts/upgrade.sh](../wrapper/scripts/upgrade.sh)
+- Server side: [scripts/upgrade.sh](../scripts/upgrade.sh)
   runs the wrapper in fallback mode alongside system sshd, then
   graduates to enforce mode, then cuts over port 22.
 - Client side: item 8 above puts the new config in `~/.mssh/`

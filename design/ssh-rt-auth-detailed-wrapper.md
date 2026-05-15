@@ -44,7 +44,7 @@ schema.** Each variant lives in its own subfolder under `wrapper/`:
 
 | Variant            | Role            | Why                                                                                  |
 |--------------------|------------------|--------------------------------------------------------------------------------------|
-| `wrapper/python/`  | PoC              | Fast iteration; reuses the PoC's shim/CA machinery directly; easy to vet against the existing test suite. Performance acceptable for non-busy hosts. |
+| `python/src/sshrt/msshd/`  | PoC              | Fast iteration; reuses the PoC's shim/CA machinery directly; easy to vet against the existing test suite. Performance acceptable for non-busy hosts. |
 | `wrapper/go/`      | Production       | Memory-safe, single static binary, easy cross-compile. The default production target after the Python PoC is vetted. `golang.org/x/crypto/ssh` is the SSH client/server library; Teleport's agentless-OpenSSH integration is a working reference. |
 | `wrapper/alpine/`  | Constrained / minimal | C + Mbed TLS or C + wolfSSL. Smallest footprint; Alpine-only; opt-in for embedded / appliance use cases where Go's runtime is unwanted. |
 
@@ -500,7 +500,7 @@ operator out of the host. The fallback-default mode means:
 6. Operator commits if verification succeeds, or `mode: fallback`
    again if not.
 
-The companion `wrapper/scripts/upgrade.sh` walks the operator through
+The companion `scripts/upgrade.sh` walks the operator through
 exactly this sequence with explicit verify/rollback prompts.
 
 ---
@@ -556,7 +556,7 @@ perspective is irrelevant or unhelpful:
 
 ### 6.6.3 The `Clock` module
 
-`wrapper/python/clock.py` (forthcoming):
+`python/src/sshrt/msshd/clock.py` (forthcoming):
 
 ```python
 @dataclass

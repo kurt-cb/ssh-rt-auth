@@ -1,0 +1,106 @@
+From 07045cdaa37aa546450a6800ceb14f2fb08a1bb5 Mon Sep 17 00:00:00 2001
+From: Damien Miller <djm@mindrot.org>
+Date: Fri, 20 Sep 2024 08:20:48 +1000
+Subject: [PATCH 1/2] Set SSH_AKC_PHASE env var on AuthorizedKeysCommand calls
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+sshd invokes AuthorizedKeysCommand twice per accepted publickey
+connection: once during the RFC 4252 §7 'querying' phase (have_sig=0,
+client asking 'would you accept this key?') and once during
+'attempting' (have_sig=1, client has signed a challenge). This is
+correct per-protocol behaviour, not a sshd bug.
+
+Helpers that perform expensive work per invocation (e.g. an RPC to an
+authorization service) currently pay for both calls. They can't tell
+the phase apart from any sshd-provided signal.
+
+Set the env var SSH_AKC_PHASE={query,verify} in the helper's process
+environment on every spawn. Existing helpers ignore unknown env vars;
+this is byte-for-byte compatible with deployed AuthorizedKeysCommand
+consumers. New helpers that opt in can short-circuit the query phase
+(return no output) and only do real work on verify.
+
+auth2-pubkey.c: plumb auth_attempt — which auth.c already passes down
+from userauth_pubkey() — one level further into
+user_key_command_allowed2(); setenv() just before the existing
+subprocess() spawn.
+
+misc.c: subprocess() builds a fresh minimal env (PATH/USER/LOGNAME/
+HOME/LANG) and execve()s the child, throwing away the parent's environ.
+Pass SSH_AKC_PHASE through from getenv() if our caller set it. No-op
+for all other subprocess() callers.
+
+No new sshd_config directives, no new %-tokens, no behaviour change
+for existing setups.
+---
+ auth2-pubkey.c | 17 +++++++++++++++--
+ misc.c         |  9 +++++++++
+ 2 files changed, 24 insertions(+), 2 deletions(-)
+
+diff --git a/auth2-pubkey.c b/auth2-pubkey.c
+index 7580db78d..34bf8abfa 100644
+--- a/auth2-pubkey.c
++++ b/auth2-pubkey.c
+@@ -616,7 +616,8 @@ user_key_allowed2(struct passwd *pw, struct sshkey *key,
+ static int
+ user_key_command_allowed2(struct passwd *user_pw, struct sshkey *key,
+     const char *remote_ip, const char *remote_host,
+-    const char *conn_id, const char *rdomain, struct sshauthopt **authoptsp)
++    const char *conn_id, const char *rdomain, int auth_attempt,
++    struct sshauthopt **authoptsp)
+ {
+ 	struct passwd *runas_pw = NULL;
+ 	FILE *f = NULL;
+@@ -709,6 +710,18 @@ user_key_command_allowed2(struct passwd *user_pw, struct sshkey *key,
+ 		xasprintf(&command, "%s %s", av[0], av[1]);
+ 	}
+ 
++	/*
++	 * Pass the publickey-auth phase to the helper via the environment
++	 * so smart helpers can short-circuit the "query" (have_sig=0) call
++	 * sshd performs per RFC 4252 §7 and only act on the "verify"
++	 * (have_sig=1) call. This is byte-for-byte compatible with any
++	 * existing helper that doesn't read SSH_AKC_PHASE.
++	 *
++	 * subprocess() fork+execs the helper, so the env we set in the
++	 * parent here is inherited by the child.
++	 */
++	setenv("SSH_AKC_PHASE", auth_attempt ? "verify" : "query", 1);
++
+ 	if ((pid = subprocess("AuthorizedKeysCommand", command,
+ 	    ac, av, &f,
+ 	    SSH_SUBPROCESS_STDOUT_CAPTURE|SSH_SUBPROCESS_STDERR_DISCARD,
+@@ -798,7 +811,7 @@ user_key_allowed(struct ssh *ssh, struct passwd *pw, struct sshkey *key,
+ 	opts = NULL;
+ 
+ 	if ((success = user_key_command_allowed2(pw, key, remote_ip,
+-	    remote_host, conn_id, rdomain, &opts)) != 0)
++	    remote_host, conn_id, rdomain, auth_attempt, &opts)) != 0)
+ 		goto out;
+ 	sshauthopt_free(opts);
+ 	opts = NULL;
+diff --git a/misc.c b/misc.c
+index afdf5142e..1bc1f095f 100644
+--- a/misc.c
++++ b/misc.c
+@@ -2818,6 +2818,15 @@ subprocess(const char *tag, const char *command,
+ 			child_set_env(&env, &nenv, "HOME", pw->pw_dir);
+ 			if ((cp = getenv("LANG")) != NULL)
+ 				child_set_env(&env, &nenv, "LANG", cp);
++			/*
++			 * Pass through SSH_AKC_PHASE if our caller set it
++			 * (auth2-pubkey.c does so before spawning
++			 * AuthorizedKeysCommand). subprocess() otherwise
++			 * builds a minimal env and the value would be lost.
++			 */
++			if ((cp = getenv("SSH_AKC_PHASE")) != NULL)
++				child_set_env(&env, &nenv,
++				    "SSH_AKC_PHASE", cp);
+ 		}
+ 
+ 		for (i = 1; i < NSIG; i++)
+-- 
+2.43.5
+

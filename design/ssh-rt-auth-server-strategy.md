@@ -36,7 +36,7 @@ established by Smallstep, Teleport's agentless mode, and Boundary.
 
 **Tier 1 ships in three language variants** under `wrapper/`:
 
-- **`wrapper/python/`** — PoC implementation. Fast iteration, easy to
+- **`python/src/sshrt/msshd/`** — PoC implementation. Fast iteration, easy to
   vet against the existing PoC test suite. Performance is acceptable
   for non-busy hosts.
 - **`wrapper/go/`** — production port of the vetted Python design.
@@ -134,7 +134,7 @@ Each row links to its integration doc (forthcoming).
 
 | Server / library                | Category    | Tier  | Notes                                              |
 |---------------------------------|-------------|-------|----------------------------------------------------|
-| ssh-rt-auth wrapper (`wrapper/python/`) | Daemon | 1 — PoC | Python implementation; inner sshd is unmodified OpenSSH; full feature set; see [detailed-wrapper.md](ssh-rt-auth-detailed-wrapper.md) |
+| ssh-rt-auth wrapper (`python/src/sshrt/msshd/`) | Daemon | 1 — PoC | Python implementation; inner sshd is unmodified OpenSSH; full feature set; see [detailed-wrapper.md](ssh-rt-auth-detailed-wrapper.md) |
 | ssh-rt-auth wrapper (`wrapper/go/`)     | Daemon | 1 — production | Go port of the vetted Python design; production default |
 | ssh-rt-auth wrapper (`wrapper/alpine/`) | Daemon | 1 — Alpine minimal | C+Mbed TLS or C+wolfSSL; smallest footprint; Alpine-only |
 | AsyncSSH (Python)               | Library     | 2     | Already integrated in `server/ssh_server.py`       |

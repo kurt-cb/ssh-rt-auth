@@ -41,7 +41,7 @@ Three components:
 - Production endpoint (Tier 1): **wrap-and-proxy** — mTLS-terminating wrapper
   in front of a hermetic, locked-down unmodified OpenSSH. Three planned
   variants in `wrapper/`:
-  - `wrapper/python/` — PoC implementation, fast iteration, easy to vet
+  - `python/src/sshrt/msshd/` — PoC implementation, fast iteration, easy to vet
   - `wrapper/go/` — production port; balances performance with memory safety
   - `wrapper/alpine/` — minimal C+Mbed TLS or C+wolfSSL for constrained
     Alpine-only deployments
@@ -94,56 +94,82 @@ Read these before implementing — they contain the detailed specifications:
 5. Connect with unauthorized key → denied
 6. Connect outside time window → denied
 
-## Project structure (target)
+## Project structure
+
+Top-level dir = language. Within each language, full client + server + CA.
+Operator-facing artifacts (configs, scripts, systemd, OpenSSH patches)
+live at the repo root and are language-neutral.
 
 ```
 ssh-rt-auth/
 ├── CLAUDE.md               # this file
-├── docs/                   # design documents
-├── ca/                     # CA server
-│   ├── __init__.py
-│   ├── server.py           # Flask app, mTLS listener
-│   ├── authorize.py        # POST /v1/authorize handler
-│   ├── admin.py            # admin API handlers
-│   ├── policy.py           # policy evaluation engine
-│   ├── enrollment.py       # enrollment DB (YAML backend)
-│   ├── cert_minter.py      # X.509 cert generation
-│   ├── identity_parser.py  # SSH key/cert blob parsing
-│   ├── audit.py            # audit logging
-│   └── config.py           # CA config loading
-├── shim/                   # authorization shim
-│   ├── __init__.py
-│   ├── shim.py             # main shim logic
-│   ├── cache.py            # cert cache
-│   ├── ca_client.py        # mTLS HTTP client with failover
-│   └── config.py           # shim config loading
-├── cli/                    # ssh-rt-admin CLI
-│   ├── __init__.py
-│   ├── main.py             # click CLI entry point
-│   ├── client.py           # mTLS HTTP client for admin API
-│   ├── key_parser.py       # SSH key/cert file parsing
-│   └── formatters.py       # output formatting
-├── server/                 # PoC SSH server (AsyncSSH) — Tier 2 reference
-│   ├── __init__.py
-│   └── ssh_server.py       # AsyncSSH server with shim integration
-├── openssh/                # AKC entry point for unmodified OpenSSH — Tier 3
-│   ├── __init__.py
-│   └── openssh_shim.py     # AuthorizedKeysCommand helper
-├── wrapper/                # Tier 1 wrap-and-proxy production endpoint
-│   ├── python/             # PoC implementation (next phase)
-│   ├── go/                 # production port (future)
-│   └── alpine/             # minimal C+Mbed TLS or C+wolfSSL (future, Alpine-only)
-├── tests/                  # tests
-│   ├── test_ca.py
-│   ├── test_shim.py
-│   ├── test_admin.py
-│   └── test_e2e.py
-├── config/                 # example configs
-│   ├── ca-config.yaml.example
-│   ├── shim-config.yaml.example
-│   └── enrollment.yaml.example
-├── requirements.txt
-└── setup.py
+├── README.md
+├── INSTALLATION.md
+├── design/                 # design docs
+├── docs/                   # operator-facing docs (overview, REST API, ...)
+├── python/                 # Python implementation (PoC + Tier 1 wrapper)
+│   ├── setup.py            # legacy-compat shim for editable install
+│   ├── pytest.ini
+│   ├── requirements.txt
+│   ├── src/sshrt/          # the package namespace
+│   │   ├── __init__.py
+│   │   ├── ca/             # CA server (Flask + mTLS)
+│   │   │   ├── server.py            # mTLS listener
+│   │   │   ├── authorize.py         # POST /v1/authorize handler
+│   │   │   ├── admin.py             # admin API handlers
+│   │   │   ├── policy.py            # policy evaluation engine
+│   │   │   ├── enrollment.py        # enrollment DB (YAML backend)
+│   │   │   ├── cert_minter.py       # X.509 cert generation
+│   │   │   ├── identity_parser.py   # SSH key/cert blob parsing
+│   │   │   ├── audit.py             # audit logging
+│   │   │   └── config.py            # CA config loading
+│   │   ├── admin/          # ssh-rt-admin CLI
+│   │   │   ├── main.py              # click CLI entry point
+│   │   │   ├── client.py            # mTLS HTTP client for admin API
+│   │   │   ├── key_parser.py        # SSH key/cert file parsing
+│   │   │   └── formatters.py
+│   │   ├── shim/           # AKC-style authorization shim
+│   │   │   ├── shim.py              # main shim logic
+│   │   │   ├── cache.py             # in-memory cert cache
+│   │   │   ├── sqlite_cache.py      # cross-process cert cache
+│   │   │   ├── ca_client.py         # mTLS HTTP client with failover
+│   │   │   └── config.py
+│   │   ├── asyncssh_ref/   # Tier 2 reference SSH server (AsyncSSH)
+│   │   │   └── ssh_server.py
+│   │   ├── akc_shim/       # Tier 3 AuthorizedKeysCommand entry point
+│   │   │   └── openssh_shim.py
+│   │   ├── msshd/          # Tier 1 wrapper daemon
+│   │   │   ├── msshd.py             # entry point
+│   │   │   ├── listener.py          # fallback-mode TCP listener
+│   │   │   ├── enforce_listener.py  # enforce-mode mTLS listener
+│   │   │   ├── inner.py             # hermetic inner sshd lifecycle
+│   │   │   ├── userca.py            # local user-CA key + OpenSSH cert mint
+│   │   │   ├── policy.py            # X.509 ext → OpenSSH critical-options
+│   │   │   ├── proxy.py             # fallback byte proxy
+│   │   │   ├── ssh_proxy.py         # enforce-mode asyncssh proxy
+│   │   │   ├── ca.py                # CA client (wraps shim.ca_client)
+│   │   │   ├── config.py
+│   │   │   └── admin.py             # ssh-rt-wrapper-admin CLI
+│   │   └── mssh.py         # Tier 1 client CLI (single module)
+│   └── tests/
+│       ├── conftest.py
+│       ├── test_*.py                # host unit tests
+│       └── lxc/                     # LXC integration tests
+├── go/                     # future — full Go impl across the trio (placeholder)
+├── c/                      # future — minimal C for Alpine (placeholder)
+├── openssh-patches/        # absorbed: upstream-targeted patches for AKC
+│   ├── patches/                     # exported .patch files
+│   ├── NOTES.md                     # patch-plan rationale
+│   ├── README.md
+│   └── build.sh                     # apply + build helper
+├── config/                 # example operator configs (lang-neutral)
+│   ├── wrapper.yaml.example
+│   └── sshd_config.template
+├── scripts/                # operator scripts
+│   └── upgrade.sh                   # host upgrade / install / verify / rollback
+└── systemd/                # service unit files (lang-neutral)
+    ├── ssh-rt-wrapperd.service
+    └── ssh-rt-inner-sshd.service
 ```
 
 ## Dependencies

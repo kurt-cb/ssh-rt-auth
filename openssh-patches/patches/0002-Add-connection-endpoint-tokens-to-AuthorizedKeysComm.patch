@@ -1,0 +1,154 @@
+From 55f57e6cbda91f8cdd1126a95d46736fd833dd33 Mon Sep 17 00:00:00 2001
+From: Kurt Godwin <kurtgo@hotmail.com>
+Date: Thu, 14 May 2026 11:50:48 -0400
+Subject: [PATCH 2/2] Add connection-endpoint tokens to AuthorizedKeysCommand
+
+AuthorizedKeysCommand helpers today have no way to learn the
+client IP, port, or which local interface accepted the connection
+without fragile /proc scraping. Source-CIDR policy is therefore
+unenforceable, and multi-homed hosts can't express per-interface
+("admin role only when accepted on the mgmt VLAN") policy.
+
+Expose what sshd already knows at AKC time via four new tokens:
+
+  %R  remote client IP
+  %r  remote client port
+  %L  local IP that accepted the connection
+  %l  local port that accepted the connection
+
+The data is sourced from ssh_remote_ipaddr / ssh_remote_port /
+ssh_local_ipaddr / ssh_local_port -- all already used elsewhere in
+the same function to build conn_id. Net cost is plumbing remote_port,
+local_ip, and local_port into user_key_command_allowed2().
+
+Both IP arguments are pointer-passed by the SSH layer, which means
+they already handle IPv6 (INET6_ADDRSTRLEN-sized) addresses
+correctly; we just forward the pointers. Port-string conversion
+uses NI_MAXSERV-sized buffers (32 bytes on glibc) -- generous
+headroom and explicitly the standard POSIX size for service-name
+buffers, so the buffer-size choice doesn't get mistaken for an IP
+address size.
+
+Interface-name (%I) is deferred: would need getifaddrs() plumbing,
+out of scope for this patch.
+
+Strictly additive; existing AKC helpers ignore unknown tokens.
+---
+ auth2-pubkey.c | 71 ++++++++++++++++++++++++++++++++++++--------------
+ 1 file changed, 51 insertions(+), 20 deletions(-)
+
+diff --git a/auth2-pubkey.c b/auth2-pubkey.c
+index 34bf8abfa..739cb260d 100644
+--- a/auth2-pubkey.c
++++ b/auth2-pubkey.c
+@@ -615,7 +615,8 @@ user_key_allowed2(struct passwd *pw, struct sshkey *key,
+  */
+ static int
+ user_key_command_allowed2(struct passwd *user_pw, struct sshkey *key,
+-    const char *remote_ip, const char *remote_host,
++    const char *remote_ip, int remote_port, const char *remote_host,
++    const char *local_ip, int local_port,
+     const char *conn_id, const char *rdomain, int auth_attempt,
+     struct sshauthopt **authoptsp)
+ {
+@@ -677,21 +678,47 @@ user_key_command_allowed2(struct passwd *user_pw, struct sshkey *key,
+ 	}
+ 	snprintf(uidstr, sizeof(uidstr), "%llu",
+ 	    (unsigned long long)user_pw->pw_uid);
+-	for (i = 1; i < ac; i++) {
+-		tmp = percent_expand(av[i],
+-		    "C", conn_id,
+-		    "D", rdomain,
+-		    "U", uidstr,
+-		    "u", user_pw->pw_name,
+-		    "h", user_pw->pw_dir,
+-		    "t", sshkey_ssh_name(key),
+-		    "f", key_fp,
+-		    "k", keytext,
+-		    (char *)NULL);
+-		if (tmp == NULL)
+-			fatal_f("percent_expand failed");
+-		free(av[i]);
+-		av[i] = tmp;
++	/*
++	 * Connection-endpoint tokens for AuthorizedKeysCommand. ssh-rt-auth
++	 * needs %R (remote IP) for source-CIDR policy and %L (local IP)
++	 * for split-domain identification on multi-homed hosts. The port
++	 * tokens are useful for audit / conntrack correlation. Interface
++	 * names are deferred (would require getifaddrs() plumbing).
++	 *
++	 * Note on buffer sizing: the *_port_str buffers below are for the
++	 * integer-to-string conversion of a u16 TCP port (max "65535\0" = 6
++	 * bytes). They are NOT address-string buffers — the IP arguments
++	 * (remote_ip, local_ip) are pointers passed in by the SSH layer
++	 * (ssh_remote_ipaddr / ssh_local_ipaddr) and already handle IPv6
++	 * up to INET6_ADDRSTRLEN. NI_MAXSERV (the standard POSIX size for
++	 * service-name buffers, 32 on glibc) is comfortable headroom.
++	 */
++	{
++		char remote_port_str[NI_MAXSERV], local_port_str[NI_MAXSERV];
++		snprintf(remote_port_str, sizeof(remote_port_str), "%d",
++		    remote_port);
++		snprintf(local_port_str, sizeof(local_port_str), "%d",
++		    local_port);
++		for (i = 1; i < ac; i++) {
++			tmp = percent_expand(av[i],
++			    "C", conn_id,
++			    "D", rdomain,
++			    "U", uidstr,
++			    "u", user_pw->pw_name,
++			    "h", user_pw->pw_dir,
++			    "t", sshkey_ssh_name(key),
++			    "f", key_fp,
++			    "k", keytext,
++			    "R", remote_ip == NULL ? "" : remote_ip,
++			    "r", remote_port_str,
++			    "L", local_ip == NULL ? "" : local_ip,
++			    "l", local_port_str,
++			    (char *)NULL);
++			if (tmp == NULL)
++				fatal_f("percent_expand failed");
++			free(av[i]);
++			av[i] = tmp;
++		}
+ 	}
+ 	/* Prepare a printable command for logs, etc. */
+ 	command = argv_assemble(ac, av);
+@@ -769,7 +796,8 @@ user_key_allowed(struct ssh *ssh, struct passwd *pw, struct sshkey *key,
+ 	u_int success = 0, i;
+ 	char *file, *conn_id;
+ 	struct sshauthopt *opts = NULL;
+-	const char *rdomain, *remote_ip, *remote_host;
++	const char *rdomain, *remote_ip, *remote_host, *local_ip;
++	int remote_port, local_port;
+ 
+ 	if (authoptsp != NULL)
+ 		*authoptsp = NULL;
+@@ -783,10 +811,12 @@ user_key_allowed(struct ssh *ssh, struct passwd *pw, struct sshkey *key,
+ 	if ((rdomain = ssh_packet_rdomain_in(ssh)) == NULL)
+ 		rdomain = "";
+ 	remote_ip = ssh_remote_ipaddr(ssh);
++	remote_port = ssh_remote_port(ssh);
+ 	remote_host = auth_get_canonical_hostname(ssh, options.use_dns);
++	local_ip = ssh_local_ipaddr(ssh);
++	local_port = ssh_local_port(ssh);
+ 	xasprintf(&conn_id, "%s %d %s %d",
+-	    ssh_local_ipaddr(ssh), ssh_local_port(ssh),
+-	    remote_ip, ssh_remote_port(ssh));
++	    local_ip, local_port, remote_ip, remote_port);
+ 
+ 	for (i = 0; !success && i < options.num_authkeys_files; i++) {
+ 		if (strcasecmp(options.authorized_keys_files[i], "none") == 0)
+@@ -811,7 +841,8 @@ user_key_allowed(struct ssh *ssh, struct passwd *pw, struct sshkey *key,
+ 	opts = NULL;
+ 
+ 	if ((success = user_key_command_allowed2(pw, key, remote_ip,
+-	    remote_host, conn_id, rdomain, auth_attempt, &opts)) != 0)
++	    remote_port, remote_host, local_ip, local_port,
++	    conn_id, rdomain, auth_attempt, &opts)) != 0)
+ 		goto out;
+ 	sshauthopt_free(opts);
+ 	opts = NULL;
+-- 
+2.43.5
+
