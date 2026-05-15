@@ -117,7 +117,13 @@ def translate_to_inner_cert_kwargs(p: CertPolicy) -> InnerCertKwargs:
     express natively into kwargs for ``UserCA.mint_user_cert``.
 
     What does NOT translate here (enforced elsewhere by the wrapper):
-      - server_bind: validated pre-mint in wrapperd
+      - source_bind: ALREADY enforced by the CA at the outer-mTLS
+        layer (the CA's grant is conditional on the client's source
+        IP matching the policy's source_cidrs). Propagating source-
+        bind onto the inner cert would mean the inner sshd refuses
+        the wrapper's localhost handoff, because the inner connection
+        comes from 127.0.0.1 — not the outer client's IP.
+      - server_bind: validated pre-mint in enforce_listener
       - channels: enforced in proxy (Variant B; Variant A relies on
         the hermetic inner sshd disabling non-session channels globally)
       - environment: applied to the spawned child env in the wrapper's
@@ -127,9 +133,6 @@ def translate_to_inner_cert_kwargs(p: CertPolicy) -> InnerCertKwargs:
     kw = InnerCertKwargs()
     if p.force_command:
         kw.force_command = p.force_command
-    if p.source_bind:
-        # OpenSSH expects a list of CIDRs / IPs in source-address.
-        kw.source_address = [p.source_bind]
     return kw
 
 

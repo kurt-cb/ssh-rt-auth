@@ -137,6 +137,7 @@ def push_source(container: str, app_root: Path) -> None:
             ['tar', '-C', str(app_root), '-czf', tar,
              '--exclude=.git', '--exclude=__pycache__', '--exclude=.venv',
              '--exclude=tests/lxc', 'ca', 'cli', 'shim', 'server',
+             'openssh', 'wrapper',
              'requirements.txt', 'setup.py'],
             check=True, capture_output=True,
         )

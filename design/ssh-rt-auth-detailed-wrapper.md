@@ -118,22 +118,110 @@ The Python and Go variants are deliberately structurally parallel.
 
 ---
 
-## 3. Outer wire protocol: SSH over TLS
+## 3. Outer wire protocol: JSON-framed session-RPC over mTLS
 
-**Decision: raw SSH session inside a TLS 1.3 + mTLS tunnel.**
+**Decision (revised 2026-05-14): custom session-RPC framing inside a
+TLS 1.3 + mTLS tunnel. NOT raw SSH.**
 
-Client invocation (familiar to anyone using SSH today):
+Earlier drafts assumed the outer protocol could be "raw SSH inside a
+TLS tunnel," which would let any stock SSH client work through the
+wrapper. That doesn't actually work end-to-end: the outer SSH session
+and the inner (wrapper → hermetic sshd) session can't share an
+authenticated principal because they use different keys. Stock `ssh`
+would need to be MITMed (sshpiper-style) to bridge the two — feasible
+but a much larger implementation surface than makes sense for v1.
+
+**v1 outer protocol** is a small line-delimited JSON handshake
+followed by raw bytes:
 
 ```
-ssh -o ProxyCommand="openssl s_client -connect host:22 -cert ~/.mssh/cert.pem -key ~/.mssh/key.pem -CAfile ~/.mssh/ca.pem -quiet -verify_return_error" user@host
+< TLS 1.3 + mTLS handshake >
+
+Client → Server   (single line, newline-terminated, ≤ 4 KB):
+  {"v": 1, "command": "<cmd>" | null, "interactive": bool,
+   "term": "xterm-256color" | null,
+   "rows": int | null, "cols": int | null,
+   "env": {"K":"V", ...} | null}
+
+Server → Client   (single line, newline-terminated):
+  {"v": 1, "ok": true} | {"v": 1, "ok": false, "reason": "..."}
+
+After ack: bidirectional raw byte stream.
+  Client → Server : stdin (raw bytes).
+  Server → Client : stdout + stderr (merged stream).
+
+TCP close = session end.
 ```
 
-A small `mssh` wrapper CLI hides this incantation and manages
-`~/.mssh/` (cert/key/CA pubkey). Internally it's still just an SSH
-ProxyCommand pointed at a TLS connector. We do not invent a custom
-RPC framing — keeping the inner protocol as standard SSH means any
-SSH client can use the wrapper with the right ProxyCommand, and we
-inherit SSH's session/channel/sftp/scp semantics for free.
+Fields:
+
+- `command` — the remote command. `null` or absent means "interactive
+  shell".
+- `interactive` — request a PTY. Defaults to `false` for exec, `true`
+  for shell.
+- `term`, `rows`, `cols` — used only when `interactive == true`.
+- `env` — environment overrides; ssh-rt-auth's `sshrtauth-environment`
+  cert extension may override these.
+
+What's intentionally NOT v1:
+
+- Multiplexed channels (sftp, port forwarding, X11). v1 is
+  one-session-per-connection.
+- Separate stdout / stderr streams. Merged for simplicity. v2 adds
+  framing or a side-channel.
+- Exit code propagation. The connection close signals "done"; mssh
+  exits 0 if the remote shell closed cleanly, non-zero if the TLS
+  tunnel was reset. v2 adds an end-of-stream frame with the real
+  exit code.
+- Window-resize messages mid-session.
+- Reconnect / session resumption.
+
+### 3.1 Why the JSON header
+
+A line of JSON gives us:
+
+- A version byte (`"v": 1`) for future protocol revisions.
+- Forward-compatible structure — adding new fields doesn't break
+  older clients that ignore them.
+- Easy debugging — operators can `tcpdump` + inspect the cleartext
+  payload (after TLS termination) and read it.
+
+The cost is a few microseconds of `json.dumps` / `json.loads` per
+connection — negligible.
+
+### 3.2 Client
+
+A small `mssh` CLI ships with the wrapper package. It does the TLS
+handshake itself (Python's `ssl.SSLContext`), emits the JSON header,
+acks, then byte-pumps stdin/stdout. **It does NOT spawn `ssh` or
+`openssl`** — those external dependencies were tempting for v1 but
+brought the protocol-bridge problem above. mssh is a pure-Python
+client; `openssh-client` is no longer a runtime requirement.
+
+```
+mssh alice@server-01                  # interactive shell, default port
+mssh alice@server-01 -- uname -a      # exec
+mssh -p 2222 alice@server-01:2222
+mssh --identity ~/.mssh/alt-cert alice@server-01
+```
+
+Configuration: `~/.mssh/config` (key=value), env vars (`MSSH_CERT`,
+`MSSH_KEY`, `MSSH_CA`), or CLI flags.
+
+### 3.3 Server (wrapper)
+
+The wrapper's `enforce_listener.py` reads the header line, dispatches:
+
+- **Exec mode** (`command != null`): wrapper opens an asyncssh
+  client to inner sshd, calls `conn.run(command, ...)`, pipes
+  result back.
+- **Interactive mode** (`command == null`, `interactive == true`):
+  wrapper opens an asyncssh session with PTY (`term`, `rows`,
+  `cols`), pumps stdin/stdout both ways.
+
+Both paths apply `sshrtauth-force-command` (overrides client's
+command if set), `sshrtauth-environment` (overrides `env`), and the
+wrapper-side `max_session_seconds` timer.
 
 ### 3.1 mTLS handshake details
 

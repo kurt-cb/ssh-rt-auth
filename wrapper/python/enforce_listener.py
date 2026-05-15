@@ -31,7 +31,11 @@ import ssl
 import uuid
 from typing import Optional
 
+import struct
+
 from cryptography import x509
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ed25519
 
 from .ca import (AuthorizationDeny, AuthorizationError, AuthorizationGrant,
                   WrapperCAClient)
@@ -123,10 +127,10 @@ class EnforceListener:
                  conn_id, source_ip, source_port, principal)
 
         # --- CA call ---
-        identity_blob = _ssh_pubkey_blob_from_cert(peer_der)
-        if not identity_blob:
-            log.warning('[%s] no SSH pubkey present in client cert (Phase 1B '
-                        'limitation); rejecting', conn_id)
+        try:
+            identity_blob = _ssh_pubkey_blob_from_cert(peer_der)
+        except ValueError as e:
+            log.warning('[%s] cannot derive SSH pubkey: %s', conn_id, e)
             await _close(writer)
             return
 
@@ -213,6 +217,8 @@ class EnforceListener:
                 self.inner_sshd.state_dir / 'ssh_host_ed25519_key.pub'),
             conn_id=conn_id,
             max_session_seconds=cert_policy.max_session_seconds,
+            forced_command=cert_policy.force_command or None,
+            forced_env=cert_policy.environment or None,
         )
 
 
@@ -243,27 +249,35 @@ def _extract_principal(peer_der: bytes) -> str:
 
 
 def _ssh_pubkey_blob_from_cert(peer_der: bytes) -> bytes:
-    """Phase 1B placeholder: hash the client cert's spki and use it as
-    a stand-in identity blob. v2 will pull a real SSH pubkey from a
-    dedicated cert SAN or a separate client-supplied header. The CA
-    needs to recognise this fingerprint via enrollment as a normal
-    pubkey for the user.
+    """Derive an SSH wire-format public key blob from the client's
+    mTLS certificate's public key.
 
-    For end-to-end testing we expect the operator to enroll the user's
-    SPKI hash as their "SSH pubkey" — same wire shape, different
-    derivation. Document this clearly in the test setup.
+    Phase 1B simplification: the mTLS cert public key IS the user's
+    SSH identity. We construct the canonical SSH wire-format blob
+    (RFC 4253 §6.6, OpenSSH PROTOCOL.certkeys) so the CA's
+    identity_parser recognises it natively — same shape the CA
+    enrollment stored when the user was added.
+
+    Currently supports Ed25519 only. Other key types raise
+    ``ValueError``. Long-term, v2's design will let the client
+    present a separate SSH pubkey in a cert SAN, decoupling the SSH
+    identity from the mTLS identity. For Phase 1B closing,
+    "mTLS cert pubkey == SSH pubkey" is the simplest workable choice.
     """
     cert = x509.load_der_x509_certificate(peer_der)
-    spki = cert.public_key().public_bytes(
-        encoding=__import__('cryptography').hazmat.primitives.serialization.Encoding.DER,
-        format=__import__('cryptography').hazmat.primitives.serialization.PublicFormat.SubjectPublicKeyInfo,
-    )
-    # The CA's identity_parser expects an SSH wire-format ed25519 blob:
-    # u32 "ssh-ed25519" + u32 key (32 bytes). Phase 1B can be expanded
-    # to handle this properly. For now we return raw SPKI bytes as a
-    # placeholder; the CA call will fail with unknown_identity unless
-    # enrollment was done to match.
-    return spki
+    pubkey = cert.public_key()
+    if isinstance(pubkey, ed25519.Ed25519PublicKey):
+        raw = pubkey.public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        )
+        # SSH wire format: u32 string-length + "ssh-ed25519" + u32 key-length + 32-byte key
+        name = b'ssh-ed25519'
+        return (struct.pack('>I', len(name)) + name
+                + struct.pack('>I', len(raw)) + raw)
+    raise ValueError(
+        f'mTLS cert pubkey type {type(pubkey).__name__} not supported in '
+        f'Phase 1B (use Ed25519 for now; v2 will support other types).')
 
 
 def _user_allowed(cfg: WrapperConfig, principal: str) -> bool:

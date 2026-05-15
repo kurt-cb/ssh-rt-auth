@@ -83,6 +83,18 @@ class InnerSshd:
         self.state_dir.mkdir(parents=True, exist_ok=True)
         os.chmod(self.state_dir, 0o0750)
 
+        # OpenSSH's distro builds use /run/sshd for privilege separation.
+        # Systemd creates it for the system ssh.service via RuntimeDirectory;
+        # we're not on that path, so we have to ensure it exists. Best-effort:
+        # if we don't have privilege to create it, the sshd binary will
+        # complain and we'll surface that via wait_port_open's error path.
+        try:
+            Path('/run/sshd').mkdir(mode=0o0755, exist_ok=True)
+        except PermissionError:
+            log.warning('cannot create /run/sshd — inner sshd may fail '
+                        'to start. Run wrapper as root or use a sshd '
+                        'binary built with a custom --with-privsep-path.')
+
         # 1. Ensure a host key exists. Per-host, generated on first
         #    start, not rotated routinely (it's behind the outer mTLS;
         #    only matters between wrapper and inner sshd on localhost).

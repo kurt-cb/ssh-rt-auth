@@ -77,16 +77,18 @@ def test_translate_to_inner_cert_kwargs():
     p = parse_cert_policy(der)
     kw = translate_to_inner_cert_kwargs(p)
     assert kw.force_command == '/bin/restricted'
-    assert kw.source_address == ['192.168.0.0/24']
+    # source_bind is NOT propagated onto the inner cert — see the
+    # comment in policy.translate_to_inner_cert_kwargs for why.
+    assert kw.source_address is None
 
 
 def test_translate_skips_unenforceable_fields():
-    """server_bind, channels, environment, max_session don't become
-    OpenSSH critical-options at this layer — they're enforced
-    elsewhere by the wrapper."""
+    """server_bind, channels, environment, max_session, source_bind
+    don't become OpenSSH critical-options at this layer — they're
+    enforced elsewhere by the wrapper (or, for source-bind,
+    already enforced by the CA at the outer-mTLS layer)."""
     der = _mint()
     p = parse_cert_policy(der)
     kw = translate_to_inner_cert_kwargs(p)
     assert kw.force_command is None
-    # source_bind translates; the others don't.
-    assert kw.source_address == ['10.0.0.0/8']
+    assert kw.source_address is None
