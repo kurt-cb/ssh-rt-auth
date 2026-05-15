@@ -45,7 +45,8 @@ from lxc_helpers import (
     ALL_CONTAINERS, ALL_SSH_HOSTS, ALPINE_IMAGE, CA_HOST, CA_PORT,
     SSHRT_ALPINE, SSHRT_U1, SSHRT_U2, SSHRT_U3, UBUNTU_IMAGE,
     get_ip, install_snoopy_on_all, lxc, lxc_available, lxc_exec,
-    push_file, push_source, push_text, wait_for_port,
+    push_file, push_source, push_text, wait_for_apt_quiescent,
+    wait_for_port,
 )
 from randomized import Scenario, build_scenario, render_scenario
 from log_helpers import banner, section
@@ -201,8 +202,9 @@ def lxc_env(request, tmp_path_factory):
         for c, ip in ips.items():
             print(f'  {c:25s} {ip}', file=sys.stderr, flush=True)
 
-        # Install dependencies via apt/apk.
-        app_root = Path(__file__).resolve().parent.parent.parent
+        # Install dependencies via apt/apk. app_root is the repo root —
+        # __file__ = python/tests/lxc/conftest.py, so four .parent's.
+        app_root = Path(__file__).resolve().parent.parent.parent.parent
         ubuntu_pkgs = [
             'python3', 'python3-cryptography', 'python3-flask',
             'python3-yaml', 'python3-click', 'python3-requests',
@@ -214,9 +216,15 @@ def lxc_env(request, tmp_path_factory):
         section('Installing deps (Ubuntu)')
         for c in [CA_HOST, SSHRT_U1, SSHRT_U2, SSHRT_U3]:
             print(f'  apt install on {c}', file=sys.stderr, flush=True)
+            wait_for_apt_quiescent(c, max_wait=120)
             lxc_exec(c, 'apt-get', 'update', '-q', timeout=180)
-            lxc_exec(c, 'apt-get', 'install', '-y', '-q', *ubuntu_pkgs,
+            # --no-install-recommends skips ~200MB of doc/sphinx packages
+            # we never use, keeping the LXC storage pool from filling up
+            # when multiple containers install in sequence.
+            lxc_exec(c, 'apt-get', 'install', '-y', '-q',
+                     '--no-install-recommends', *ubuntu_pkgs,
                      timeout=600)
+            lxc_exec(c, 'apt-get', 'clean')
             push_source(c, app_root)
             lxc_exec(c, 'python3', '-c',
                      'import cryptography, flask, yaml, click, requests, asyncssh',
@@ -244,7 +252,7 @@ def lxc_env(request, tmp_path_factory):
         # Initialize the CA.
         section('Initializing CA')
         lxc_exec(CA_HOST, 'sh', '-c',
-                 'PYTHONPATH=/app python3 -c "'
+                 'PYTHONPATH=/app/src python3 -c "'
                  'from sshrt.ca.cert_minter import bootstrap_ca; '
                  f"bootstrap_ca('/etc/ssh-rt-auth/ca', "
                  f"tls_server_sans=['DNS:localhost','IP:127.0.0.1',"
@@ -496,7 +504,7 @@ def _provision_ssh_host(*, container: str, canonical: str, lxc_env: dict,
             '#!/sbin/openrc-run\n'
             'name="ssh-rt-auth-server"\n'
             'command="/usr/bin/python3"\n'
-            f'command_args="-m server.ssh_server --shim-config '
+            f'command_args="-m sshrt.asyncssh_ref.ssh_server --shim-config '
             '/etc/ssh-rt-auth/server/shim.yaml --host-key '
             '/etc/ssh-rt-auth/server/host-key --users-file '
             '/etc/ssh-rt-auth/server/users.allowed --listen-host 0.0.0.0 '
@@ -506,6 +514,7 @@ def _provision_ssh_host(*, container: str, canonical: str, lxc_env: dict,
             'output_log="/var/log/ssh-rt-auth-server.log"\n'
             'error_log="/var/log/ssh-rt-auth-server.log"\n'
             'directory="/app"\n'
+            'export PYTHONPATH=/app/src\n'
             'export PYTHONUNBUFFERED=1\n'
         )
         push_text(container, rc, '/etc/init.d/ssh-rt-auth-server', mode='755')
@@ -513,7 +522,7 @@ def _provision_ssh_host(*, container: str, canonical: str, lxc_env: dict,
         # Start directly in the background — openrc isn't running in the
         # container yet, so we just exec it as a nohup'd process.
         lxc_exec(container, 'sh', '-c',
-                 f'cd /app && nohup {server_cmd} '
+                 f'cd /app && PYTHONPATH=/app/src nohup {server_cmd} '
                  '> /var/log/ssh-rt-auth-server.log 2>&1 & echo $! > '
                  '/run/ssh-rt-auth-server.pid')
     else:
@@ -521,6 +530,7 @@ def _provision_ssh_host(*, container: str, canonical: str, lxc_env: dict,
             '[Unit]\nDescription=ssh-rt-auth AsyncSSH server\n'
             'After=network.target\n'
             '[Service]\nWorkingDirectory=/app\n'
+            'Environment="PYTHONPATH=/app/src"\n'
             f'ExecStart={server_cmd}\n'
             'Restart=on-failure\n'
             'StandardOutput=append:/var/log/ssh-rt-auth-server.log\n'

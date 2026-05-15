@@ -61,7 +61,8 @@ for _name in ('lxc_helpers', 'log_helpers'):
 from lxc_helpers import (
     ALPINE_IMAGE, UBUNTU_IMAGE,
     get_ip, install_snoopy_on_all, lxc, lxc_exec,
-    push_file, push_source, push_text, wait_for_port,
+    push_file, push_source, push_text, wait_for_apt_quiescent,
+    wait_for_port,
 )
 from log_helpers import banner, section
 
@@ -426,7 +427,7 @@ will show the denial reason; tail it on the CA host:
 
 def test_setup_adhoc_environment(request, tmp_path_factory):
     """Provision the ad-hoc lab. Persists everything; does NOT tear down."""
-    from ca import cert_minter
+    from sshrt.ca import cert_minter
     from sshrt.admin.client import CAClient
     from sshrt.admin.key_parser import b64_blob, parse_key_text
 
@@ -467,9 +468,11 @@ def test_setup_adhoc_environment(request, tmp_path_factory):
     section('Installing deps (Ubuntu)')
     for c in [CA_NAME, ACCT_NAME, SALES_NAME, HR_NAME]:
         print(f'  apt install on {c}', file=sys.stderr, flush=True)
+        wait_for_apt_quiescent(c, max_wait=120)
         lxc_exec(c, 'apt-get', 'update', '-q', timeout=180)
-        lxc_exec(c, 'apt-get', 'install', '-y', '-q', *ubuntu_pkgs,
-                 timeout=600)
+        lxc_exec(c, 'apt-get', 'install', '-y', '-q',
+                 '--no-install-recommends', *ubuntu_pkgs, timeout=600)
+        lxc_exec(c, 'apt-get', 'clean')
         push_source(c, app_root)
     section('Installing deps (Alpine)')
     alpine_pkgs = ['python3', 'py3-cryptography', 'py3-flask', 'py3-yaml',

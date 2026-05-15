@@ -57,7 +57,7 @@ for _name in ('lxc_helpers', 'log_helpers'):
 
 from lxc_helpers import (
     UBUNTU_IMAGE, get_ip, lxc, lxc_exec, push_file, push_text,
-    wait_for_port,
+    wait_for_apt_quiescent, wait_for_port,
 )
 from log_helpers import banner, section
 
@@ -85,6 +85,8 @@ _OPENSSH_PORTABLE = Path(os.environ.get(
 _BUILD_DEPS = [
     'build-essential',
     'autoconf',
+    'automake',     # provides aclocal — recommended by autoconf but
+                    # we strip recommends; depend on it explicitly.
     'libssl-dev',
     'zlib1g-dev',
     'libcrypt-dev',
@@ -157,9 +159,11 @@ def test_openssh_patches_end_to_end(request):
         '--config', 'security.privileged=true', timeout=300)
 
     section('Installing build deps')
+    wait_for_apt_quiescent(CONTAINER, max_wait=120)
     lxc_exec(CONTAINER, 'apt-get', 'update', '-q', timeout=180)
-    lxc_exec(CONTAINER, 'apt-get', 'install', '-y', '-q', *_BUILD_DEPS,
-             timeout=600)
+    lxc_exec(CONTAINER, 'apt-get', 'install', '-y', '-q',
+             '--no-install-recommends', *_BUILD_DEPS, timeout=600)
+    lxc_exec(CONTAINER, 'apt-get', 'clean')
 
     section('Pushing pristine V_9_9_P1 source via git archive')
     src = _OPENSSH_PORTABLE

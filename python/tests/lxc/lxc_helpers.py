@@ -113,6 +113,58 @@ def get_ip(container: str, max_wait: int = 120) -> str:
     raise RuntimeError(f'{container}: no IPv4 within {max_wait}s')
 
 
+def wait_for_apt_quiescent(container: str, max_wait: int = 120) -> None:
+    """Disable Ubuntu's background apt automation so our installs are
+    deterministic, then wait for any in-flight apt-daily or
+    unattended-upgrades to finish (so we can take the dpkg lock cleanly).
+
+    Fresh Ubuntu containers run `apt-daily.timer`, `apt-daily-upgrade.timer`,
+    `unattended-upgrades`, `apport`, and `ubuntu-report` on first boot.
+    Racing them produces exit 100 ('Could not get lock
+    /var/lib/dpkg/lock-frontend'). For a throwaway test container we
+    don't need any of these services; the safest fix is to disable them
+    proactively. Subsequent calls on an already-prepared container are
+    a fast no-op.
+
+    Idempotent: re-running on a prepared container is harmless.
+    """
+    # 1. Disable the timers so they won't kick off NEW apt jobs after we
+    #    finish waiting. Best-effort: ignore failures from services that
+    #    don't exist on minimal images.
+    lxc_exec(container, 'sh', '-c', """
+        systemctl stop  apt-daily.timer         apt-daily-upgrade.timer \
+                       apport.service           2>/dev/null || true
+        systemctl disable apt-daily.timer       apt-daily-upgrade.timer \
+                       apport.service           2>/dev/null || true
+        systemctl mask apt-daily.service        apt-daily-upgrade.service \
+                       2>/dev/null || true
+        ubuntu-report -f send no                2>/dev/null || true
+    """, check=False, timeout=30)
+
+    # 2. Wait for any in-flight apt/dpkg job to finish so we get the lock.
+    deadline = time.monotonic() + max_wait
+    while time.monotonic() < deadline:
+        r = lxc_exec(
+            container, 'sh', '-c',
+            'pgrep -fa "apt-get|unattended-upgr|dpkg|aptd" 2>/dev/null '
+            '| grep -v pgrep || echo CLEAR',
+            check=False,
+        )
+        if 'CLEAR' in (r.stdout or ''):
+            break
+        time.sleep(2)
+    else:
+        raise RuntimeError(
+            f'{container}: apt did not become quiescent in {max_wait}s')
+
+    # 3. Purge unattended-upgrades so it can't be re-triggered. Done
+    #    AFTER the wait, when we know we hold the lock.
+    lxc_exec(container, 'sh', '-c',
+             'DEBIAN_FRONTEND=noninteractive apt-get purge -y -q '
+             'unattended-upgrades 2>/dev/null || true',
+             check=False, timeout=60)
+
+
 def wait_for_port(container: str, port: int, max_wait: int = 60) -> None:
     deadline = time.monotonic() + max_wait
     while time.monotonic() < deadline:

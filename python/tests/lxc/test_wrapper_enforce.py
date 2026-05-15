@@ -44,7 +44,7 @@ for _name in ('lxc_helpers', 'log_helpers'):
 
 from lxc_helpers import (
     UBUNTU_IMAGE, get_ip, lxc, lxc_exec, push_file, push_source, push_text,
-    wait_for_port,
+    wait_for_apt_quiescent, wait_for_port,
 )
 from log_helpers import banner, section
 
@@ -232,8 +232,20 @@ def test_wrapper_enforce_end_to_end(request, tmp_path_factory):
             'python3-asyncssh', 'openssh-server', 'openssh-client']
     section('Installing apt deps + project source')
     for c in (CA_NAME, TARGET_NAME):
+        # Freshly-launched Ubuntu containers run apt-daily /
+        # unattended-upgrades on first boot. Racing them gives exit 100
+        # ('Could not get dpkg lock'). Wait until apt is quiescent.
+        wait_for_apt_quiescent(c, max_wait=120)
         lxc_exec(c, 'apt-get', 'update', '-q', timeout=180)
-        lxc_exec(c, 'apt-get', 'install', '-y', '-q', *pkgs, timeout=600)
+        # --no-install-recommends skips doc packages (python-asyncssh-doc,
+        # libjs-sphinxdoc, etc.) that we never use; saves ~200MB per
+        # container. Important when test_wrapper_enforce runs late in
+        # the suite and the LXC storage pool is already crowded with
+        # the session-scoped lxc_env containers.
+        lxc_exec(c, 'apt-get', 'install', '-y', '-q',
+                 '--no-install-recommends', *pkgs, timeout=600)
+        # Free the downloaded .debs to make room for push_source.
+        lxc_exec(c, 'apt-get', 'clean')
         push_source(c, app_root)
 
     # ---- 1. CA bootstrap + start ------------------------------------------

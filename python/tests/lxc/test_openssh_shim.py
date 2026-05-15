@@ -57,7 +57,7 @@ for _name in ('lxc_helpers', 'log_helpers'):
 
 from lxc_helpers import (
     UBUNTU_IMAGE, get_ip, lxc, lxc_exec, push_file, push_source, push_text,
-    wait_for_port,
+    wait_for_apt_quiescent, wait_for_port,
 )
 from log_helpers import OpsLog, banner, section
 
@@ -140,8 +140,11 @@ def test_openssh_shim_end_to_end(request, tmp_path_factory):
             'openssh-server', 'openssh-client']
     section('Installing apt deps + project source')
     for c in (CA_NAME, TARGET_NAME):
+        wait_for_apt_quiescent(c, max_wait=120)
         lxc_exec(c, 'apt-get', 'update', '-q', timeout=180)
-        lxc_exec(c, 'apt-get', 'install', '-y', '-q', *pkgs, timeout=600)
+        lxc_exec(c, 'apt-get', 'install', '-y', '-q',
+                 '--no-install-recommends', *pkgs, timeout=600)
+        lxc_exec(c, 'apt-get', 'clean')
         push_source(c, app_root)
 
     # ---- CA bootstrap + start ----------------------------------------------
