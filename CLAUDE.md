@@ -59,7 +59,9 @@ Read these before implementing — they contain the detailed specifications:
 - `docs/ssh-rt-auth-detailed-rest-api.md` — Complete REST API spec (all endpoints, all fields)
 - `design/ssh-rt-auth-server-strategy.md` — Three-tier deployment model; wrapper is Tier 1
 - `design/ssh-rt-auth-wrapper-research.md` — Wrap-and-proxy vs greenfield decision; hermetic inner sshd design
+- `design/ssh-rt-auth-detailed-wrapper.md` — Implementation blueprint for the Tier 1 wrapper (Python/Go/Alpine variants)
 - `design/ssh-rt-auth-v2-enhancements.md` — v2 connection-context schema, reserved cert-extension OIDs, sshd-implementation policy
+- `design/ssh-rt-auth-phase2-ideas.md` — Deferred ideas (per-connection sshd, smart cards, HTTPS proxy, passkeys, 2FA, …)
 - `docs/ssh-rt-auth-detailed-ca-admin.md` — CA internals, enrollment DB schema, cert minting, admin CLI
 
 ## PoC implementation phases

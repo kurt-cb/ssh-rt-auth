@@ -281,6 +281,12 @@ proven protocol stack.
   role, etc.) need an extension mechanism. The wrapper exposes a narrow
   whitelist of safe toggles via the operator YAML; everything else
   requires editing the wrapper's source.
+  - **Phase 2 candidate:** if this whitelist proves too constraining,
+    consider per-connection ephemeral sshd ([phase2-ideas.md § 1](ssh-rt-auth-phase2-ideas.md))
+    so that the authorization cert's policy extensions render
+    directly into a per-session sshd_config. Removes the need for a
+    static whitelist entirely; sshd does native enforcement of
+    whatever the cert says.
 - **OpenSSH version drift** — new directives appear, defaults change.
   Mitigated by version-pinning the OpenSSH binary used as the inner
   sshd, regenerating the config template per supported version, and
