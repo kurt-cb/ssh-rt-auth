@@ -590,6 +590,93 @@ Zero code, ~1500 lines of operator-facing markdown. Should live as
 
 ---
 
+## 10. Browser-based SSH terminal (xterm.js over HTTPS, mTLS-authenticated)
+
+### Idea
+
+Add an HTTPS entry point to `msshd` that serves a browser-side SSH
+terminal (xterm.js + WebSocket). The browser authenticates with the
+user's existing mssh X.509 client cert (presented as a TLS client cert
+during the HTTPS handshake). Server-side, msshd treats the browser
+session exactly like a regular `mssh` session: same CA call, same
+ephemeral inner-sshd cert mint, same policy enforcement.
+
+Net effect: a single internet-facing `msshd` becomes a **web-based
+bastion** that can proxy-jump to any backend SSH server the user is
+authorized to reach — no local SSH client install required, no
+client-side mssh binary required. Just a browser and the user's mTLS
+cert.
+
+### Composition
+
+  ```
+  browser (with user mTLS cert in keystore)
+      │ HTTPS + mTLS (cert authenticates the user)
+      ▼
+  msshd HTTPS listener  ─►  CA  ─►  inner sshd cert
+      │
+      ▼
+  msshd opens an outbound SSH session to target host (proxy-jump)
+      │
+      ▼
+  xterm.js  ◄── WebSocket stream ──── PTY in the target session
+  ```
+
+### Wins
+
+  - Zero-install client: any browser becomes an SSH client.
+  - The mTLS cert workflow already exists; the browser just presents
+    the cert during the TLS handshake (same machinery used by
+    enterprise SSO over client certs).
+  - Single chokepoint for auditing, recording, and policy: the
+    bastion sees every keystroke if you want it to.
+  - Works from networks where outbound SSH (port 22) is blocked but
+    HTTPS (443) is open.
+
+### Cons / open questions
+
+  - **Browser support for client mTLS certs is uneven** — works in
+    most desktop browsers but is awkward on mobile, often needs
+    OS-level keychain integration, and some browsers (Safari, mobile
+    Chrome) handle cert prompts poorly. Real test: can a Firefox user
+    on Ubuntu and a Safari user on iOS both authenticate cleanly?
+  - **Cert distribution to the browser keystore** is the rough edge.
+    The mssh CLI knows how to read PEM files; the browser needs the
+    cert imported (PKCS#12 + passphrase). Tooling and docs would be
+    needed.
+  - **Recording / session replay** raises privacy + compliance
+    questions distinct from regular SSH — every keystroke transits
+    the bastion, where regular SSH end-to-end-encrypts past it.
+  - **WebSocket framing** is straightforward but adds a new wire
+    format alongside the existing JSON-frame outer protocol — two
+    things to keep in sync.
+  - **Proxy-jump target list** — does the browser UI list the user's
+    allowed servers (queried from the CA via the bastion), or does
+    the user type a hostname? CA-driven would be cleaner but couples
+    the UI to the CA's enrollment view.
+
+### Composes with
+
+  - Item 4 (HTTPS / TCP proxy) — same HTTPS listener can host both
+    the terminal UI and protocol-proxy targets.
+  - Item 7 (WebAuthn / passkeys) — passkeys could replace mTLS for
+    browser auth where cert handling is painful (e.g. mobile).
+  - Item 8 (centralized `~/.mssh/` client config) — server-side
+    inventory of allowed targets feeds the terminal UI's target picker.
+
+### LOC estimate
+
+  - HTTPS+WebSocket listener inside msshd: ~300 lines.
+  - Browser-side xterm.js + WebSocket glue: ~500 lines JS.
+  - PTY + outbound-SSH plumbing on the bastion: ~200 lines.
+  - Cert-import docs + Firefox/Chrome/Safari verification: weeks of
+    real testing, not LOC.
+
+Total order-of-magnitude: ~1k lines of code + meaningful UX work,
+plus the recording / compliance design conversation.
+
+---
+
 ## How items relate
 
 ```
@@ -635,6 +722,13 @@ a coherent identity layer, not piecemeal.
 Item 4 is a **scope expansion** — the wrapper becomes a multi-protocol
 authorization proxy, not just an SSH gateway. Decide before it whether
 that's the project's direction.
+
+Item 10 (browser-based xterm.js terminal) is a **client-side
+expansion** that builds on item 4's HTTPS listener: the bastion
+serves a web SSH client to anyone with the right mTLS cert in their
+browser. Composes naturally with item 7 (passkeys, where browser
+cert handling is painful) and item 8 (centralized client config, to
+feed the terminal UI's target picker).
 
 ---
 

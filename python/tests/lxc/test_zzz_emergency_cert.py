@@ -188,7 +188,8 @@ def test_emergency_cert_used_when_ca_offline(provisioned_env):
         lxc_exec(target_container, 'sh', '-c',
                  'fuser -k -9 2222/tcp 2>/dev/null; sleep 3')
         lxc_exec(target_container, 'sh', '-c',
-                 'cd /app && nohup /usr/bin/python3 -m sshrt.asyncssh_ref.ssh_server '
+                 'cd /app && PYTHONPATH=/app/src nohup /usr/bin/python3 '
+                 '-m sshrt.debug_sshd.ssh_server '
                  '--shim-config /etc/ssh-rt-auth/server/shim.yaml '
                  '--host-key /etc/ssh-rt-auth/server/host-key '
                  '--users-file /etc/ssh-rt-auth/server/users.allowed '

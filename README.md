@@ -24,7 +24,8 @@ ssh-rt-auth/
 │   │   ├── ca/                  # CA — issues short-lived X.509 authz certs
 │   │   ├── admin/               # ssh-rt-admin CLI (enroll servers/users/policies)
 │   │   ├── shim/                # authorization shim (server-side CA query over mTLS)
-│   │   ├── asyncssh_ref/        # Tier 2 AsyncSSH reference SSH server
+│   │   ├── debug_sshd/          # debug-only AsyncSSH server (calls shim);
+│   │   │                        # not a production tier — isolated CA-call surface
 │   │   ├── akc_shim/            # Tier 3 AuthorizedKeysCommand entry point
 │   │   ├── msshd/               # Tier 1 wrapper daemon
 │   │   └── mssh.py              # Tier 1 client CLI
@@ -46,38 +47,60 @@ live at the repo root and are language-neutral.
 
 ---
 
-## Three-tier deployment model
+## Deployment tiers
 
-| Tier | What you run                                                        | Auth model                  | When to choose it |
-|------|---------------------------------------------------------------------|-----------------------------|-------------------|
-| **1** | **ssh-rt-auth wrapper** + hermetic localhost OpenSSH (`wrapper/`)  | Full cert-bound, all policy extensions enforced | **Production.** Currently designed; implementation in next phase. |
-| **2** | Your own SSH server library (AsyncSSH, Go, libssh, etc.) with our integration | Full cert-bound, in-app    | You're embedding an SSH server in your app. AsyncSSH integration ships in this repo (`server/`); others planned. |
-| **3** | Unmodified `sshd` + our AKC shim (`openssh/`)                       | Yes/no via AuthorizedKeysCommand. No in-session constraint enforcement. | Lowest deployment friction; orgs that can't deploy the wrapper. Documented limitations. |
+| Tier | What you run                                                | Auth model                                                                 | When to choose it |
+|------|-------------------------------------------------------------|----------------------------------------------------------------------------|-------------------|
+| **1** | **msshd** + hermetic localhost OpenSSH                     | Full cert-bound, all policy extensions enforced. mTLS-terminating wrapper. | **Production target.** Works end-to-end in this repo. |
+| **3** | Unmodified `sshd` + our AKC shim                            | Yes/no via AuthorizedKeysCommand. No in-session constraint enforcement.    | Lowest deployment friction; orgs that can't deploy the wrapper. Documented limitations. |
+
+(There is no Tier 2 production target. The earlier "Tier 2 — embed in
+an SSH library" path is represented only by `debug_sshd`, a debug-only
+AsyncSSH server kept as a minimal CA-call surface for isolated
+debugging. See [Terminology](#terminology) below.)
 
 See [design/ssh-rt-auth-server-strategy.md](design/ssh-rt-auth-server-strategy.md)
 for the full strategy.
 
 ---
 
-## What's in the PoC (this repo)
+## Terminology
 
-The Proof-of-Concept implements **Tiers 2 and 3 end-to-end**, with the
-**CA, shim, admin CLI, and full test suite**.
+The project uses several overlapping terms ("wrapper", "shim",
+"server"). Canonical names today:
+
+| Term | What it is | Lives at | Status |
+|---|---|---|---|
+| **CA** | Authorization service (Flask + mTLS); issues short-lived X.509 authz certs | `python/src/sshrt/ca/` | Production |
+| **Shim** *(library)* | Shared "call the CA over mTLS" code; reused by every server tier | `python/src/sshrt/shim/` | Production |
+| **msshd** | Tier-1 wrapper daemon — mTLS-terminating outer listener, CA call, ephemeral OpenSSH cert minting, hermetic inner sshd | `python/src/sshrt/msshd/` | Production (formerly `ssh-rt-wrapperd`) |
+| **mssh** | Tier-1 client CLI; pure-Python TLS client with JSON-framed outer protocol | `python/src/sshrt/mssh.py` | Production |
+| **Inner sshd** | The hermetic OpenSSH subprocess that msshd spawns and owns | (binary, lifecycle in `msshd/inner.py`) | Production |
+| **AKC shim** *(entry point)* | Tier-3 OpenSSH `AuthorizedKeysCommand` helper that calls the shim library | `python/src/sshrt/akc_shim/` | Production |
+| **debug_sshd** | Debug-only AsyncSSH server that calls the shim. **Not a production tier.** Kept as the minimal CA-call surface for isolating CA/shim issues from the wrap-and-proxy machinery | `python/src/sshrt/debug_sshd/` | Debug only (formerly `asyncssh_ref`, "Tier 2 reference") |
+
+When someone says "the wrapper", they mean **msshd** (Tier 1). The
+shim library is a separate concept used by every tier. `debug_sshd`
+is not a wrapper and not a production tier.
+
+---
+
+## What's in this repo
 
 - **`python/src/sshrt/ca/`** — CA server: Flask + mTLS, issues
   short-lived X.509 authz certs with policy extensions.
 - **`python/src/sshrt/admin/`** — `ssh-rt-admin` CLI: enroll servers,
   users, admins, keys, policies. Role-based access control.
-- **`python/src/sshrt/shim/`** — Authorization shim called by sshd or
-  library-based servers. mTLS to CA, response validation, SQLite cache.
-- **`python/src/sshrt/asyncssh_ref/`** — Reference Tier 2 SSH server
-  (AsyncSSH). End-to-end working.
-- **`python/src/sshrt/akc_shim/`** — Tier 3 entry point: stock
-  `AuthorizedKeysCommand` helper that calls the shim.
+- **`python/src/sshrt/shim/`** — Authorization shim called by every
+  server tier. mTLS to CA, response validation, SQLite cache.
 - **`python/src/sshrt/msshd/`** — Tier 1 wrapper daemon: mTLS-terminating
   outer listener, CA call, OpenSSH cert minting, hermetic inner sshd.
 - **`python/src/sshrt/mssh.py`** — Tier 1 client CLI (pure-Python TLS
   client, JSON-framed outer protocol).
+- **`python/src/sshrt/akc_shim/`** — Tier 3 entry point: stock
+  `AuthorizedKeysCommand` helper that calls the shim.
+- **`python/src/sshrt/debug_sshd/`** — Debug-only AsyncSSH server (not a
+  production tier).
 - **`python/tests/`** — host + LXC integration tests.
 
 ---

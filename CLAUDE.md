@@ -17,9 +17,17 @@ can't trigger authorization.
 
 Three components:
 
-1. **SSH server with shim** — An SSH server (AsyncSSH for PoC) calls the
-   ssh-rt-auth shim after userauth succeeds. The shim queries the CA over mTLS,
-   caches the response, and returns the authorization cert to the server.
+1. **SSH server with shim** — An SSH server calls the ssh-rt-auth shim
+   after userauth succeeds. The shim queries the CA over mTLS, caches
+   the response, and returns the authorization cert to the server.
+   Two production server tiers exist:
+     - **Tier 1 — msshd** (wrap-and-proxy): mTLS-terminating wrapper
+       in front of a hermetic, locked-down unmodified OpenSSH.
+     - **Tier 3 — AKC shim**: patched OpenSSH calls the shim via
+       AuthorizedKeysCommand.
+   A third module, `debug_sshd` (Python AsyncSSH), is a debug-only
+   server used to exercise the CA/shim path in isolation; it is NOT a
+   production tier.
 
 2. **Authorization CA** — REST API over mTLS. Receives identity blobs and
    connection context from the shim, evaluates policy, mints X.509 authorization
@@ -34,7 +42,8 @@ Three components:
 - Identity proof: bare SSH public key + OpenSSH cert (v1 scope, no X.509 client certs)
 - Server identity: via mTLS cert, not hostname. CA identifies server from mTLS handshake.
 - Raw blob forwarding: sshd/shim does not parse identity certs. CA does all parsing.
-- PoC language: Python (AsyncSSH for SSH, Flask for CA, cryptography lib for X.509)
+- PoC language: Python (asyncssh as the SSH library inside msshd and the
+  debug-only debug_sshd; Flask for the CA; cryptography lib for X.509)
 - PoC minimum target: **Alpine + Python**. CA stays Python in production —
   it runs on operator infrastructure, not constrained endpoints, so the
   earlier "C/Mbed TLS CA" plan was dropped.
@@ -82,11 +91,10 @@ Read these before implementing — they contain the detailed specifications:
 3. Failover logic (try endpoints in order)
 4. Response validation (verify cert signature before caching)
 
-### Phase 3: SSH server integration
-1. AsyncSSH server with public key auth
-2. Hook into shim after userauth succeeds
-3. Extract raw public key blob and connection context
-4. Enforce cert constraints (channel policy, source bind)
+### Phase 3: SSH server integration (historical PoC plan)
+The original PoC integrated the shim via a Python AsyncSSH server
+(now `debug_sshd/`, kept for diagnostics). Production paths are now
+the Tier-1 wrapper (`msshd`) and the Tier-3 AKC shim.
 
 ### Phase 4: End-to-end test
 1. ssh-rt-admin init → bootstrap
@@ -136,8 +144,9 @@ ssh-rt-auth/
 │   │   │   ├── sqlite_cache.py      # cross-process cert cache
 │   │   │   ├── ca_client.py         # mTLS HTTP client with failover
 │   │   │   └── config.py
-│   │   ├── asyncssh_ref/   # Tier 2 reference SSH server (AsyncSSH)
-│   │   │   └── ssh_server.py
+│   │   ├── debug_sshd/     # Debug-only AsyncSSH server (calls shim);
+│   │   │   └── ssh_server.py    # not a production tier — minimal CA-call
+│   │   │                        # surface for isolated debugging.
 │   │   ├── akc_shim/       # Tier 3 AuthorizedKeysCommand entry point
 │   │   │   └── openssh_shim.py
 │   │   ├── msshd/          # Tier 1 wrapper daemon

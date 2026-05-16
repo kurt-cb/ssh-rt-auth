@@ -307,7 +307,7 @@ def _start_asyncssh_server(server: _Server) -> None:
     """systemd (Ubuntu) or nohup (Alpine) to start the AsyncSSH server."""
     c = server.container
     server_cmd = (
-        '/usr/bin/python3 -m sshrt.asyncssh_ref.ssh_server '
+        '/usr/bin/python3 -m sshrt.debug_sshd.ssh_server '
         '--shim-config /etc/ssh-rt-auth/server/shim.yaml '
         '--host-key /etc/ssh-rt-auth/server/host-key '
         '--users-file /etc/ssh-rt-auth/server/users.allowed '
@@ -1118,7 +1118,7 @@ def _setup_command_log_section(*, ips: dict, user_keys: dict) -> list[str]:
         'Plus a systemd unit (Ubuntu) or a `nohup`-launched process (Alpine) that runs:',
         '',
         '```',
-        'python3 -m sshrt.asyncssh_ref.ssh_server \\',
+        'python3 -m sshrt.debug_sshd.ssh_server \\',
         '   --shim-config /etc/ssh-rt-auth/server/shim.yaml \\',
         '   --host-key    /etc/ssh-rt-auth/server/host-key \\',
         '   --users-file  /etc/ssh-rt-auth/server/users.allowed \\',

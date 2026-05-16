@@ -4,7 +4,9 @@ Subpackages:
   ca/            CA server (Flask + mTLS).
   admin/         ssh-rt-admin CLI (operator-facing).
   shim/          AuthorizedKeysCommand-style authorization shim.
-  asyncssh_ref/  Tier 2 reference SSH server (AsyncSSH).
+  debug_sshd/    Debug-only AsyncSSH server that calls the shim
+                 (formerly Tier 2 reference; kept as a minimal CA-call
+                 surface for debugging the CA / shim path in isolation).
   akc_shim/      Tier 3 entry point — OpenSSH AuthorizedKeysCommand.
   msshd/         Tier 1 wrapper daemon (msshd).
   mssh           Tier 1 client CLI (single module).

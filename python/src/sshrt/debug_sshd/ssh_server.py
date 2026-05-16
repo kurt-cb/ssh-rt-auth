@@ -1,9 +1,13 @@
-"""AsyncSSH server with ssh-rt-auth shim integration.
+"""Debug-only AsyncSSH server with ssh-rt-auth shim integration.
 
-The SSH server enforces no authorization on its own; after public-key auth
-succeeds, it asks the shim. The shim returns the X.509 authorization cert (or
-denial). The server parses the X.509 critical extensions and enforces them on
-the session (source-bind, server-bind, channel-policy).
+Not a production tier — this is a minimal SSH server that calls the
+shim after publickey auth, used for debugging the CA / shim path in
+isolation from the wrap-and-proxy machinery in msshd. The shim
+returns the X.509 authorization cert (or denial); this server parses
+the X.509 critical extensions and enforces them on the session
+(source-bind, server-bind, channel-policy).
+
+For production use, see msshd (the Tier-1 wrap-and-proxy daemon).
 """
 from __future__ import annotations
 
@@ -28,7 +32,7 @@ from sshrt.shim.shim import (STATUS_AUTHORIZED, STATUS_DENIED, STATUS_ERROR,
                        AuthorizeOutcome, Shim)
 
 
-log = logging.getLogger('ssh-rt-auth-server')
+log = logging.getLogger('sshrt.debug_sshd')
 
 
 # X.509 OIDs for the policy extensions. Must match ca/cert_minter.py.
@@ -424,7 +428,7 @@ def _parse_user_keys_file(path: str) -> dict[str, list[bytes]]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(prog='ssh-rt-auth-server')
+    p = argparse.ArgumentParser(prog='ssh-rt-debug-sshd')
     p.add_argument('--shim-config', required=True)
     p.add_argument('--host-key', required=True)
     p.add_argument('--users-file', required=True,

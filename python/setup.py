@@ -31,8 +31,10 @@ setup(
             # CA + admin
             'ssh-rt-auth-ca       = sshrt.ca.server:main',
             'ssh-rt-admin         = sshrt.admin.main:cli',
-            # Tier 2 reference SSH server
-            'ssh-rt-auth-server   = sshrt.asyncssh_ref.ssh_server:main',
+            # Debug-only AsyncSSH server (minimal CA-call surface; not
+            # a production tier — used for diagnosing CA/shim issues
+            # in isolation from the wrap-and-proxy machinery).
+            'ssh-rt-debug-sshd    = sshrt.debug_sshd.ssh_server:main',
             # Tier 1 wrapper
             'msshd                = sshrt.msshd.msshd:main',
             'ssh-rt-wrapper-admin = sshrt.msshd.admin:main',

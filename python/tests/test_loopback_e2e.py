@@ -199,7 +199,7 @@ def test_loopback_full_ssh_authorization(loopback_env, tmp_path):
     import asyncssh
     from sshrt.shim.config import ShimConfig
     from sshrt.shim.shim import Shim
-    from sshrt.asyncssh_ref.ssh_server import _handle_session, make_server_factory
+    from sshrt.debug_sshd.ssh_server import _handle_session, make_server_factory
 
     cfg = ShimConfig.load(loopback_env['shim_cfg'])
     shim = Shim(cfg)

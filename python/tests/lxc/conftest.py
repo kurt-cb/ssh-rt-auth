@@ -492,7 +492,7 @@ def _provision_ssh_host(*, container: str, canonical: str, lxc_env: dict,
 
     # 7. systemd/openrc unit to run the AsyncSSH server.
     server_cmd = (
-        '/usr/bin/python3 -m sshrt.asyncssh_ref.ssh_server '
+        '/usr/bin/python3 -m sshrt.debug_sshd.ssh_server '
         '--shim-config /etc/ssh-rt-auth/server/shim.yaml '
         '--host-key /etc/ssh-rt-auth/server/host-key '
         '--users-file /etc/ssh-rt-auth/server/users.allowed '
@@ -504,7 +504,7 @@ def _provision_ssh_host(*, container: str, canonical: str, lxc_env: dict,
             '#!/sbin/openrc-run\n'
             'name="ssh-rt-auth-server"\n'
             'command="/usr/bin/python3"\n'
-            f'command_args="-m sshrt.asyncssh_ref.ssh_server --shim-config '
+            f'command_args="-m sshrt.debug_sshd.ssh_server --shim-config '
             '/etc/ssh-rt-auth/server/shim.yaml --host-key '
             '/etc/ssh-rt-auth/server/host-key --users-file '
             '/etc/ssh-rt-auth/server/users.allowed --listen-host 0.0.0.0 '
