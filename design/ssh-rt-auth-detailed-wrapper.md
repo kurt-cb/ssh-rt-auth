@@ -503,6 +503,121 @@ operator out of the host. The fallback-default mode means:
 The companion `scripts/upgrade.sh` walks the operator through
 exactly this sequence with explicit verify/rollback prompts.
 
+### 6.5.1 Gated mode — the missing third state (deferred)
+
+`fallback` and `enforce` form a **binary cliff**. fallback lets the
+operator's existing sshd policy do everything (PAM, AllowGroups,
+host-based, AKC plugins, ciphers, …); enforce throws all of it away
+in favor of an msshd-managed hermetic config. For many real
+deployments — and especially for the rollout step in the operator's
+adoption journey — that cliff is too steep. Operators have years of
+accumulated policy in `/etc/ssh/sshd_config` that they can't just
+delete on Day 1.
+
+A third mode, **gated**, would split the difference:
+
+- mTLS termination + CA call: **yes** (so attackers can't even
+  attempt auth without a CA-issued client cert)
+- Inner sshd: **the operator's existing sshd on port 22**, with their
+  full unmodified policy in effect
+- Cert minting: **no** (no ephemeral inner cert; the user re-presents
+  whatever SSH credential the operator's sshd expects)
+
+The CA becomes a **gatekeeper** rather than an auth oracle. The
+operator's existing auth model survives; ssh-rt-auth adds a
+pre-auth allow/deny check using the same enrollment + policy
+machinery that enforce mode uses.
+
+| Mode | Outer auth (mssh→msshd) | Inner auth (msshd→sshd) | Whose policy wins |
+|---|---|---|---|
+| `fallback` | none — TCP proxy | operator's full sshd_config | operator |
+| `gated` *(deferred)* | mTLS + CA approval | operator's full sshd_config | operator, gated by CA |
+| `enforce` | mTLS + CA approval, ephemeral cert minted | hermetic minimal sshd_config (trusts only the mint key) | CA |
+
+The natural adoption journey becomes
+**fallback → gated → enforce**, each step reversible by a single
+config flag:
+
+  - **fallback → gated:** turn on CA gating. Existing users
+    unaffected as long as they have a CA-issued mTLS cert; new
+    attackers are blocked before sshd ever sees them. Operator's
+    auth model is untouched.
+  - **gated → enforce:** swap inner sshd for the hermetic one. The
+    operator commits to "CA-mediated auth replaces whatever was
+    there before."
+
+Reversibility means an operator who flips and then sees a
+problem can drop back one step without losing the in-progress
+deployment.
+
+#### CA-side policy flag (optional)
+
+For estates running a mix of servers — some in gated mode, some in
+enforce, some still in fallback — the wrapper config can carry
+`mode:` per host (today's mechanism), or the CA's per-server
+enrollment record can carry an `inner_policy:` field that the
+wrapper reads at startup:
+
+```yaml
+# enrollment.yaml — server record
+srv-acct:
+  groups: [accounting]
+  inner_policy: operator   # operator | ca_managed  (default: ca_managed)
+```
+
+`inner_policy: operator` ⇒ wrapper runs in gated mode for this server
+even though it knows how to do enforce. The same binary serves both;
+the CA centralizes the per-server transition state.
+
+#### Implementation sketch
+
+Gated mode reuses ~80% of the enforce-mode code path. The differences:
+
+- After the CA returns the authorization cert, the wrapper does
+  **not** mint an inner OpenSSH cert and does **not** start a
+  hermetic inner sshd. Instead it opens a TCP connection to the
+  operator's sshd on port 22 (configurable) and proxies bytes.
+- The wrapper still parses the CA's response for source_cidrs /
+  channel_policy / expiry, and still enforces those at the proxy
+  layer (drop connections that don't match the CIDR, kill at expiry,
+  etc.). Channel-policy enforcement is the one wrapper-side guarantee
+  that survives — the operator's sshd can't enforce
+  "session-only, no port-forwarding" the same way.
+- New `mode: gated` value in wrapper.yaml; new test surface; new
+  audit log entry shape ("gated-grant" vs "enforce-grant").
+
+LOC estimate: ~300 in `msshd/`, ~50 in `ca/policy.py` for the new
+inner_policy field, ~150 in tests.
+
+#### Open questions
+
+- **Channel policy is weaker in gated mode.** The wrapper sees the
+  SSH outer bytes but not the channel-open messages (those are
+  encrypted end-to-end between the client and the operator's sshd).
+  We can enforce source-CIDR and expiry, but "session-only, no
+  port-forwarding" cannot be enforced wrapper-side in gated mode.
+  Does that matter? Probably yes for compliance-sensitive deployments,
+  in which case gated mode is a *temporary* state, not a steady state.
+- **Identity proof is double-presented.** The user shows their mTLS
+  cert to msshd AND their SSH key to the inner sshd. The two need
+  not be related (you could authenticate as alice via mTLS but the
+  inner sshd sees a stolen bob SSH key). Bind the two by requiring
+  the CA to mint a per-session OpenSSH cert that the inner sshd
+  trusts? Then we're most of the way back to enforce mode, just with
+  the operator's policy still consulted post-cert-validation. Worth
+  thinking through whether this hybrid is actually a fourth distinct
+  mode.
+- **Operator's sshd needs to keep allowing whatever auth they did
+  before.** No config change required on the inner sshd; the wrapper
+  just forwards bytes. Confirm in the test matrix.
+
+This section is **deferred** — not in the v1 Tier-1 wrapper. Captured
+here so the migration story has a complete answer rather than the
+current cliff. See also
+[ssh-rt-auth-phase2-ideas.md §9](ssh-rt-auth-phase2-ideas.md) (migration
+runbook) and §10 (browser-based bastion, which has the same
+"auth-via-operator vs auth-via-CA" choice to make).
+
 ---
 
 ## 6.6 Clock and time authority
