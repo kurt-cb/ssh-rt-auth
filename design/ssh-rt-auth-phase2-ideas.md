@@ -958,6 +958,89 @@ exercises.
 
 ---
 
+## 15. `install_mssh` — distro-style installer + BYO-container adhoc lab
+
+### Idea
+
+Replace the adhoc lab's LXC-specific source-push with a portable
+**install script** that simulates `apt install mssh msshd` as if it
+were a real distro package. The script does:
+
+  - Install Python + venv on the target machine
+  - Install the mssh + msshd packages (from a pre-built tarball)
+  - Lay down systemd units for `msshd` (and the CA, where relevant)
+  - **Does NOT enable** anything — leaves the operator to configure
+    `wrapper.yaml`, enroll at the CA, and `systemctl enable msshd`
+    when they're ready.
+
+The adhoc lab becomes provisioner-agnostic. The test author spins
+up containers however they want (LXC, Docker, VirtualBox, k8s, a
+fleet of bare VMs, an SBC cluster on the desk), runs `install_mssh`
+on each, and the rest of the lab (enroll, configure, flip modes)
+proceeds over ssh exactly as it would in production.
+
+### Composition
+
+  - Single tarball: `mssh-<version>.tar.gz` containing the Python
+    source, install script, systemd units, default config templates.
+  - `install_mssh.sh <tarball>`: idempotent. Verifies prereqs
+    (python3, openssl, openssh-server), creates a system user
+    (`msshd`), installs into `/opt/mssh/`, drops systemd units in
+    `/etc/systemd/system/` (disabled). Outputs the post-install
+    checklist (enroll at CA, edit wrapper.yaml, enable).
+  - Per-distro shims for `apt-get install` vs `apk add` of system
+    deps (openssh-server, python3, openssl) wrapped behind a small
+    detection step at the top of `install_mssh.sh`.
+
+### Wins
+
+  - **Adhoc lab is no longer LXC-specific.** Bring any container or
+    VM; run the install script; join it to the CA.
+  - **Documents the production install path.** The install script
+    IS what `apt install mssh msshd` will eventually run. Operators
+    who don't want a package can run it directly.
+  - **Tutorial story improves.** "Here's a clean Ubuntu VM. Run
+    `install_mssh`. Now enroll it at the CA. Now ssh as alice."
+  - **Test surface contracts.** The lab's setup code stops being
+    100+ lines of LXC-specific provisioning + `lxc file push` and
+    becomes "spin up containers (your choice), then run the install
+    script over ssh."
+
+### Cons / open questions
+
+  - The install script needs to handle distro variation gracefully.
+    Ubuntu/Debian (`apt`), Alpine (`apk`), RHEL/Fedora (`dnf`),
+    Arch (`pacman`). Start with Ubuntu + Alpine since those are the
+    PoC's targets; extend later.
+  - Versioning: the tarball needs a clear semver and the install
+    script needs to refuse downgrades or warn on cross-version
+    mismatch with the CA.
+  - In the adhoc lab, who builds the tarball? Probably a small
+    `make tarball` step at lab-startup time so the lab uses the
+    in-tree source.
+
+### Composes with
+
+  - §11 (debug_sshd swap-in) — the install script lays down
+    `debug_sshd` alongside the hermetic OpenSSH; the admin
+    enables either as needed.
+  - §13 (legacy capture + dual-enforce) — `install_mssh.sh`
+    optionally runs `ssh-rt-admin import` on the target before
+    enrollment, so the CA starts with a migrated copy of the
+    existing sshd policy.
+  - §14 (tutorial doc) — the install script is the tutorial's
+    onboarding step; the rest of the tutorial demonstrates what
+    you do after `install_mssh` finishes.
+
+### LOC estimate
+
+  - `install_mssh.sh`: ~300 lines of bash with distro-detection.
+  - Tarball assembly: ~50-line `make tarball` rule.
+  - Adhoc-lab refactor to use the install script over ssh instead
+    of `lxc file push`: ~200 lines net (mostly deletions).
+
+---
+
 ## How items relate
 
 ```

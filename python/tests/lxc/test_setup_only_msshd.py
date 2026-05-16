@@ -771,145 +771,257 @@ def _push_flip_scripts_to_ca(ips: dict, ca_ip: str) -> None:
 def _write_overview_md(path: Path, *, ips: dict, artifacts_dir: Path) -> None:
     user_lines = []
     for u in USERS:
-        primary = _primary_container_for(u)
         allowed = _allowed_servers_for(u)
-        allowed_str = ', '.join(s.canonical for s in allowed) or '(none)'
+        allowed_str = ', '.join(s.canonical.replace('srv-', '')
+                                for s in allowed) or '(none)'
         user_lines.append(
-            f'| {u.username} | {u.department} | {primary} | {allowed_str} |')
+            f'| {u.username} | {u.department} | {allowed_str} |')
     server_lines = '\n'.join(
-        f'| {s.canonical} | {s.group} | {s.container} | {ips[s.container]} |'
+        f'| {s.canonical.replace("srv-", "")} | {s.canonical} | '
+        f'{s.group} | {ips[s.container]} |'
         for s in SERVERS)
-    path.write_text(f'''# ssh-rt-auth msshd adhoc lab — overview
+    path.write_text(f'''# mssh adhoc lab — what you've got
 
-The lab provisions 4 server containers and 1 CA, walks them through the
-Tier-1 adoption journey (Phase 0 → Phase 1 → Phase 2), and leaves them
-at Phase 2 with helpers to flip between modes.
+5 machines: 4 SSH servers (acct, sales, hr, eng) + 1 CA. All driven
+**from the host** via ssh/mssh — you don't need to know or care that
+they're LXC containers underneath.
 
-## Containers
+## One-liner setup
 
-| canonical | group | container | IP |
+```bash
+source ./adhoc-env.sh
+```
+
+That exports every IP, every key path, and a few helper functions
+(`mssh_as`, `ssh_as`, `ssh_as_2200`, `flip_to_enforce`,
+`flip_to_fallback`). Everything below assumes you've sourced it.
+
+## Servers
+
+| short | canonical | group | IP |
 |---|---|---|---|
 {server_lines}
-| ca-host | (n/a) | {CA_NAME} | {ips[CA_NAME]} |
+| ca | — | — | {ips[CA_NAME]} |
 
 ## Users
 
-| user | department | primary container | allowed servers |
-|---|---|---|---|
+| user | department | allowed servers |
+|---|---|---|
 {chr(10).join(user_lines)}
 
-The superuser (`root-admin`) holds a CA policy that grants every
-department; the SSH keypair is also added to every other user's
-`authorized_keys` so the superuser can `ssh user@host` as anyone for
-Phase 0 / 1 debugging.
+`root-admin` is the superuser — has access everywhere via CA policy,
+and their SSH key is in every other user's `authorized_keys` plus
+`/root/.ssh/authorized_keys` on every server (the break-glass admin
+path the flip scripts use).
 
-## Modes (current state: **enforce** = Phase 2)
+## Trying things — host commands only
 
-  - `mssh user@<ip>:{MSSHD_PORT}` — works in Phase 2 (mTLS to msshd, CA call).
-  - `ssh -p {MSSHD_PORT} user@<ip>` — works ONLY when msshd is in fallback.
-  - `ssh -p {VANILLA_SSHD_PORT} user@<ip>` — always works (bypasses msshd).
-
-## Flipping modes — the operator workflow
-
-The flip scripts live on the **CA container** at
-`/home/root-admin/flip-to-{{enforce,fallback}}.sh`. They use ssh
-(root@server, via root-admin's pubkey added to /root/authorized_keys
-during setup) to push the new wrapper.yaml, then mssh (for enforce)
-or ssh -p {MSSHD_PORT} (for fallback) to verify. Verification failure
-triggers an automatic revert. No `lxc exec` — it's how a real operator
-would drive the transition.
+The lab leaves you in **Phase 2 (enforce)** mode. mssh goes through
+msshd → CA → inner sshd. Three transports are available:
 
 ```bash
-# As a real operator would do it:
-ssh root-admin@{CA_NAME}-ip          # (in production, this is your CA host)
-./flip-to-fallback.sh                # → Phase 1 behavior
-./flip-to-enforce.sh                 # → Phase 2 behavior (default after setup)
+# Phase 2: mssh as alice, talking to msshd-enforce on port 2200
+mssh_as alice acct whoami            # OK (alice's policy grants accounting)
+mssh_as alice sales whoami           # denied — out-of-policy
+mssh_as root-admin sales whoami      # OK (superuser policy grants everything)
 
-# For the adhoc lab, skip the outer SSH and just exec on the container:
-lxc exec {CA_NAME} -- su - root-admin -c ./flip-to-fallback.sh
-lxc exec {CA_NAME} -- su - root-admin -c ./flip-to-enforce.sh
+# Phase 0: plain ssh to vanilla sshd on port 22. Always works,
+# bypasses msshd entirely. Useful as your backdoor.
+ssh_as alice acct                    # interactive shell
+ssh_as alice acct whoami             # one-shot
+
+# Phase 1: ssh through msshd-fallback on port 2200. Only works after
+# `flip_to_fallback` has been run.
+flip_to_fallback                     # all 4 servers → fallback mode
+ssh_as_2200 alice acct whoami        # ssh transparently proxied via msshd
+flip_to_enforce                      # back to Phase 2
 ```
 
-## Per-user material (host side)
+## Flipping modes — operator workflow
 
-Lives in `{artifacts_dir.name}/`:
+`flip_to_enforce` and `flip_to_fallback` are shell functions that
+ssh to the CA as `root-admin` and run the actual flip scripts
+(`/home/root-admin/flip-to-{{enforce,fallback}}.sh` on the CA). The
+scripts loop over every server, push the new `wrapper.yaml`,
+restart msshd, verify via the post-flip transport (mssh for enforce,
+ssh -p 2200 for fallback), and revert that server's config if
+verification fails.
+
+No `lxc exec` anywhere — it's the same workflow a real operator
+would use against an internet-routable CA.
+
+## Per-user material (on the host)
 
 ```
-{artifacts_dir.name}/
-├── <user>                   # SSH ed25519 private key
-├── <user>.pub               # SSH public key (registered for Phase 0/1)
-├── <user>.crt               # X.509 mTLS client cert (Phase 2)
-├── <user>.key               # X.509 mTLS client key  (Phase 2)
-└── user-ca.crt              # mTLS trust root (verify wrapper TLS cert)
+adhoc-keys/
+├── <user>                   # SSH Ed25519 private key      → $ALICE_KEY
+├── <user>.pub               # SSH public key (Phase 0/1)
+├── <user>.crt               # X.509 mTLS client cert (Phase 2) → $ALICE_CRT
+├── <user>.key               # X.509 mTLS client key           → $ALICE_KEYPEM
+└── user-ca.crt              # mTLS trust root                 → $USER_CA
 ```
 
-## Direct from the host
-
-Make sure `mssh` is on PATH (`pip install -e ./python`), then:
-
-```bash
-export ALICE_CERT={artifacts_dir.name}/alice.crt
-export ALICE_KEY={artifacts_dir.name}/alice.key
-export USER_CA={artifacts_dir.name}/user-ca.crt
-export ACCT_IP={ips[ACCT_NAME]}
-export SALES_IP={ips[SALES_NAME]}
-
-# Phase 2 — mssh via msshd-enforce on 2200
-MSSH_CERT=$ALICE_CERT MSSH_KEY=$ALICE_KEY MSSH_CA=$USER_CA \\
-    mssh alice@$ACCT_IP:{MSSHD_PORT} -- whoami
-
-# Phase 0 — direct ssh to in-container sshd on 22 (always works)
-ssh -i {artifacts_dir.name}/alice -p 22 alice@$ACCT_IP whoami
-```
-
-## From inside any user's primary container
-
-```bash
-lxc exec {ACCT_NAME} -- su - alice -c 'mssh amy@{ips[SALES_NAME]}:{MSSHD_PORT} -- whoami'
-# (will be denied — alice's policy is accounting-only)
-
-lxc exec {CA_NAME} -- su - root-admin -c 'mssh alice@{ips[HR_NAME]}:{MSSHD_PORT} -- whoami'
-# (allowed — superuser policy grants every group)
-```
+Every per-user env var follows the same shape: `$ALICE_KEY`,
+`$BOB_CRT`, `$ROOT_ADMIN_KEYPEM`, etc.
 
 ## Cleanup
 
-`./cleanup_containers.sh` deletes all 5 containers.
+```bash
+./cleanup_containers.sh
+```
+
+## Advanced — when you actually want to be inside a container
+
+You don't normally need this, but for debugging it's useful:
+
+```bash
+lxc exec {ACCT_NAME} -- su - alice    # interactive shell as alice in acct
+lxc exec {CA_NAME}   -- cat /var/log/ssh-rt-auth/audit.jsonl
+lxc exec {CA_NAME}   -- journalctl -u ssh-rt-auth-ca --no-pager -n 50
+```
+
+The full container names are `{CA_NAME}`, `{ACCT_NAME}`,
+`{SALES_NAME}`, `{HR_NAME}`, `{ENG_NAME}`.
 ''')
 
 
 def _write_env_sh(path: Path, *, ips: dict, artifacts_dir: Path) -> None:
-    lines = [
-        '# Source me from the directory that contains adhoc-keys/',
-        f'export CA_HOST={CA_NAME}',
-        f'export ACCT_HOST={ACCT_NAME}',
-        f'export SALES_HOST={SALES_NAME}',
-        f'export HR_HOST={HR_NAME}',
-        f'export ENG_HOST={ENG_NAME}',
-        f'export CA_IP={ips[CA_NAME]}',
-        f'export ACCT_IP={ips[ACCT_NAME]}',
-        f'export SALES_IP={ips[SALES_NAME]}',
-        f'export HR_IP={ips[HR_NAME]}',
-        f'export ENG_IP={ips[ENG_NAME]}',
-        f'export MSSHD_PORT={MSSHD_PORT}',
-        f'export SSHD_PORT={VANILLA_SSHD_PORT}',
-        f'export USER_CA={artifacts_dir}/user-ca.crt',
-    ]
+    """adhoc-env.sh — source from the host. Exposes IPs, ports, key
+    paths, and helper functions so the operator can act as any user
+    via host-side ssh/mssh, with `lxc exec` nowhere in sight.
+    """
+    # Host-side mssh: invoke the in-tree module directly so we don't
+    # depend on the venv's `mssh` entry-point shim being current.
+    # app_root/python/src is the canonical PYTHONPATH for the
+    # checked-out source tree.
+    src_dir = Path(__file__).resolve().parent.parent.parent / 'src'
+    # Server name → IP. Use short names (acct, sales, hr, eng, ca).
+    server_env = []
+    for s in SERVERS:
+        short = s.canonical.replace('srv-', '')
+        server_env.append(f'export {short}_IP={ips[s.container]}')
+    server_env.append(f'export ca_IP={ips[CA_NAME]}')
+
+    # User → key paths.
+    user_env = []
     for u in USERS:
         n = u.username.upper().replace('-', '_')
-        lines += [
+        user_env += [
             f'export {n}_KEY={artifacts_dir}/{u.username}',
+            f'export {n}_PUB={artifacts_dir}/{u.username}.pub',
             f'export {n}_CRT={artifacts_dir}/{u.username}.crt',
             f'export {n}_KEYPEM={artifacts_dir}/{u.username}.key',
         ]
-    lines += [
-        '',
-        'alias mssh-alice="MSSH_CERT=$ALICE_CRT MSSH_KEY=$ALICE_KEYPEM '
-        'MSSH_CA=$USER_CA mssh"',
-        'alias mssh-superuser="MSSH_CERT=$ROOT_ADMIN_CRT '
-        'MSSH_KEY=$ROOT_ADMIN_KEYPEM MSSH_CA=$USER_CA mssh"',
-    ]
-    path.write_text('\n'.join(lines) + '\n')
+
+    body = f'''# Source me from the directory that contains adhoc-keys/.
+# Lets you run ssh/mssh as any user directly from the host — no
+# `lxc exec` required. The lab containers are addressable by their
+# bridged IPs (exposed below).
+
+export USER_CA={artifacts_dir}/user-ca.crt
+export MSSHD_PORT={MSSHD_PORT}
+export SSHD_PORT={VANILLA_SSHD_PORT}
+# Where to find the mssh Python module (host-side invocations).
+export MSSH_SRC_DIR={src_dir}
+
+# Server short-name → IP
+{chr(10).join(server_env)}
+
+# Per-user identity material
+{chr(10).join(user_env)}
+
+# ---- Helper functions ------------------------------------------------------
+#
+# Usage in all three forms:
+#   mssh_as     <user> <server> [cmd...]   # Phase 2: mssh → msshd → CA → inner sshd
+#   ssh_as      <user> <server> [cmd...]   # Phase 0: ssh → vanilla sshd on 22 (always works)
+#   ssh_as_2200 <user> <server> [cmd...]   # Phase 1: ssh → msshd-fallback → sshd on 22
+#
+# <server> is the short name: acct | sales | hr | eng | ca
+# <user> is any USERS entry: alice amy bob bart carol charlie dave diana root-admin
+# Run with no [cmd] to land in an interactive shell.
+
+_resolve_ip() {{
+    local short="$1"
+    eval "echo \\"\\${{${{short}}_IP:-}}\\""
+}}
+
+_user_envvar() {{
+    echo "$1" | tr 'a-z-' 'A-Z_'
+}}
+
+# -o IdentitiesOnly=yes ensures ssh offers ONLY the -i key, not
+# every key in the agent — otherwise the server hits MaxAuthTries
+# and disconnects before our key gets tried.
+_SSH_OPTS='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes'
+
+mssh_as() {{
+    local user="$1" server="$2"; shift 2
+    local ip; ip=$(_resolve_ip "$server")
+    if [ -z "$ip" ]; then
+        echo "unknown server: $server (try acct/sales/hr/eng/ca)" >&2
+        return 1
+    fi
+    local U; U=$(_user_envvar "$user")
+    local cert key
+    eval "cert=\\$${{U}}_CRT"
+    eval "key=\\$${{U}}_KEYPEM"
+    if [ "$#" -eq 0 ]; then
+        MSSH_CERT="$cert" MSSH_KEY="$key" MSSH_CA="$USER_CA" \\
+            PYTHONPATH="$MSSH_SRC_DIR" \\
+            python3 -m sshrt.mssh "$user@$ip:$MSSHD_PORT"
+    else
+        MSSH_CERT="$cert" MSSH_KEY="$key" MSSH_CA="$USER_CA" \\
+            PYTHONPATH="$MSSH_SRC_DIR" \\
+            python3 -m sshrt.mssh "$user@$ip:$MSSHD_PORT" -- "$@"
+    fi
+}}
+
+ssh_as() {{
+    local user="$1" server="$2"; shift 2
+    local ip; ip=$(_resolve_ip "$server")
+    if [ -z "$ip" ]; then
+        echo "unknown server: $server" >&2
+        return 1
+    fi
+    local U; U=$(_user_envvar "$user")
+    local key; eval "key=\\$${{U}}_KEY"
+    ssh -i "$key" $_SSH_OPTS -p $SSHD_PORT "$user@$ip" "$@"
+}}
+
+ssh_as_2200() {{
+    local user="$1" server="$2"; shift 2
+    local ip; ip=$(_resolve_ip "$server")
+    if [ -z "$ip" ]; then
+        echo "unknown server: $server" >&2
+        return 1
+    fi
+    local U; U=$(_user_envvar "$user")
+    local key; eval "key=\\$${{U}}_KEY"
+    ssh -i "$key" $_SSH_OPTS -p $MSSHD_PORT "$user@$ip" "$@"
+}}
+
+# Convenience: flip the lab between modes from the host. The script
+# itself lives on the CA container at /home/root-admin/; we just invoke
+# it via the superuser's ssh key (no `lxc exec`).
+
+flip_to_enforce() {{
+    ssh -i "$ROOT_ADMIN_KEY" $_SSH_OPTS \\
+        "root-admin@$ca_IP" ./flip-to-enforce.sh
+}}
+
+flip_to_fallback() {{
+    ssh -i "$ROOT_ADMIN_KEY" $_SSH_OPTS \\
+        "root-admin@$ca_IP" ./flip-to-fallback.sh
+}}
+
+echo "adhoc env loaded. Try:"
+echo "  mssh_as alice acct whoami           # mssh through msshd (Phase 2)"
+echo "  ssh_as alice acct whoami            # plain ssh (Phase 0, always works)"
+echo "  flip_to_fallback                    # all servers → msshd fallback mode"
+echo "  flip_to_enforce                     # all servers → msshd enforce mode (default)"
+'''
+    path.write_text(body)
 
 
 # ---------------------------------------------------------------------------
@@ -1144,6 +1256,20 @@ def test_setup_adhoc_msshd_journey(request, tmp_path_factory):
             wrapper_user_ca_priv=w_ca_priv,
             wrapper_user_ca_pub=w_ca_pub)
         _install_msshd(s.container, mode='enforce', ca_ip=ips[CA_NAME])
+
+    # CA host needs sshd + root-admin's authorized_keys so the host's
+    # `flip_to_enforce`/`flip_to_fallback` helpers can ssh in.
+    section('PHASE 2: enabling sshd on CA + root-admin authorized_keys')
+    lxc_exec(CA_NAME, 'systemctl', 'enable', '--now', 'ssh', check=False)
+    try:
+        wait_for_port(CA_NAME, VANILLA_SSHD_PORT, max_wait=30)
+    except Exception:
+        print(f'  warning: CA sshd port {VANILLA_SSHD_PORT} not ready',
+              file=sys.stderr, flush=True)
+    _ensure_unix_account(CA_NAME, SUPERUSER.username)
+    push_text(CA_NAME, user_keys[SUPERUSER.username]['pub_line'] + '\n',
+              f'/home/{SUPERUSER.username}/.ssh/authorized_keys', mode='600',
+              owner=f'{SUPERUSER.username}:{SUPERUSER.username}')
 
     section('PHASE 2: per-user mssh material + /usr/local/bin/mssh wrapper')
     for s in SERVERS:
