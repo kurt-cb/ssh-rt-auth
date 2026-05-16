@@ -677,6 +677,287 @@ plus the recording / compliance design conversation.
 
 ---
 
+## 11. In-situ `debug_sshd` swap-in for troubleshooting (sideband CA audit)
+
+### Idea
+
+Promote `debug_sshd` (the Python AsyncSSH server that already calls
+the shim) from "debug-only utility" to **a hot-swappable inner SSH
+server you can stand up next to the production sshd for in-situ
+diagnosis**. An admin facing a "why is my mssh session failing on
+this one server" mystery would:
+
+1. SSH to the troubled server (break-glass path).
+2. Run `msshd-admin enable-debug-sshd` — msshd starts spawning
+   `debug_sshd` instead of the hermetic OpenSSH for new connections
+   (existing connections unaffected).
+3. Trigger the failing mssh from the client side.
+4. Read structured debug output (per-stage shim call, cert validation,
+   policy match) — either locally or streamed to the CA as a
+   **sideband audit channel**.
+5. `msshd-admin disable-debug-sshd` — back to production.
+
+The sideband audit is the interesting part. `debug_sshd` already
+parses the X.509 extensions inline (because it's a library-style
+integration of the shim, not a delegating proxy). It can emit a
+detailed per-event log alongside the regular CA audit, giving the
+operator forensic-grade visibility into *exactly* what the inner
+sshd saw and decided — without having to interpret strace or
+sshd's terse DEBUG output.
+
+### Composition with the adoption journey
+
+  - In **fallback** mode, debug_sshd has no role (msshd is just a
+    proxy).
+  - In **gated** mode (§6.5.1 of wrapper detailed design),
+    debug_sshd could be enabled as an alternative inner server
+    that calls the shim, so the operator can see CA decisions
+    even before flipping to enforce.
+  - In **enforce** mode, debug_sshd replaces the hermetic OpenSSH
+    on demand for troubleshooting. The hermetic config can't be
+    instrumented at runtime; debug_sshd can.
+
+### Wins
+
+  - Single tool for "is the CA actually returning what I expect for
+    this user?" without rebuilding/redeploying.
+  - Sideband audit gives the CA visibility into per-decision detail
+    that the production sshd path doesn't emit.
+  - Re-uses code that already exists (debug_sshd has been kept
+    explicitly for this kind of purpose).
+  - Useful in the adhoc lab too: an operator running the tutorial
+    can flip a knob and see CA decisions live.
+
+### Cons / open questions
+
+  - Hot-swap of the inner server while msshd is running implies
+    msshd accepts a runtime config-change signal (graceful drain
+    + restart the inner). That's a small-but-real piece of
+    plumbing — not zero.
+  - Sideband audit channel: ship logs to the CA over the existing
+    mTLS connection, or open a separate one? Volume / format /
+    retention questions.
+  - Production deployments probably want this **gated by an admin
+    role** at the CA — turning on debug_sshd on a sensitive host
+    is itself an auditable action.
+  - debug_sshd performance vs hermetic sshd: AsyncSSH is fine for
+    debug, but you wouldn't want to leave it on as the steady-state
+    inner server. Need a "this is temporary, expire after N hours"
+    safety.
+
+### LOC estimate
+
+  - msshd: ~150 lines for inner-server swap + signal handling.
+  - debug_sshd: ~200 lines for structured sideband-audit emitter.
+  - CA: ~100 lines for receiving + storing the sideband stream
+    alongside regular audit entries.
+
+---
+
+## 12. MCP interface to the CA — natural-language diagnostics + config
+
+### Idea
+
+Expose the CA over an [MCP](https://modelcontextprotocol.io)
+(Model Context Protocol) server so that an AI assistant (Claude,
+or any other MCP-compatible agent) can:
+
+  - **Read-only diagnostics:** "why was alice denied last Tuesday?",
+    "show me every policy that grants access to srv-acct",
+    "what's the most-recently-rotated server cert", "summarize the
+    audit log for the last hour" — answered in natural language by
+    querying the CA's enrollment + audit data through MCP tools.
+  - **Trusted-AI configuration:** with an admin-grade mTLS cert and
+    explicit grant from the operator, the assistant can also enroll
+    users, attach policies, or rotate certs — every change goes
+    through the same admin API + audit log as a human admin's
+    actions.
+
+The CA already has the structured data (enrollment YAML + JSON-Lines
+audit). MCP just exposes it as typed tools an LLM can call.
+
+### Composition
+
+Two MCP server modes, served from the same daemon:
+
+  - `read_only`: enrollment-list, policy-explain, audit-search,
+    cert-info. Available to any admin cert with `auditor` role.
+  - `trusted_write`: above + server-add, user-add, policy-add,
+    key-rotate. Requires admin cert with explicit `mcp_writable: yes`
+    flag in enrollment. Every call audit-logged as
+    `actor: mcp:<admin_subject>`.
+
+### Wins
+
+  - The CA's data model is the source of truth for "who can do what
+    where." A natural-language interface to that data lowers the
+    operational ceiling significantly.
+  - Forensic queries on the audit log become trivial.
+  - Bootstrapping a new CA / re-enrolling after a disaster becomes
+    "describe the policy in English, AI translates and applies"
+    rather than YAML-by-hand.
+
+### Cons / open questions
+
+  - Trusted-AI writes are a meaningful trust-delegation step.
+    Probably opt-in per-admin and per-CA, never on by default.
+    Should the operator be able to require an interactive approval
+    step (CA prompts the admin's terminal for each `apply`?)
+  - Audit-log volume going through MCP could be large; want pagination
+    + query primitives, not just dump-everything.
+  - Read-only mode is the obvious starting point. Write mode is a
+    second milestone.
+
+### LOC estimate
+
+  - MCP server skeleton + tool definitions: ~400 lines.
+  - Read-only adapters over enrollment/audit: ~200 lines.
+  - Write adapters + role gating: ~300 lines.
+  - Operator docs + per-tool descriptions for the LLM: small markdown
+    investment.
+
+---
+
+## 13. Legacy-config migration with dual-enforce / shadow mode
+
+### Idea
+
+When an organization adopts ssh-rt-auth, their existing servers carry
+*years* of accumulated policy: `authorized_keys` files, sshd_config
+`AllowGroups`/`AllowUsers`, PAM rules, AKC plugins, `/etc/security/`
+limits, etc. Manually translating that into CA enrollments is
+high-effort and the highest-risk part of the migration ("did I
+remember to grant alice the same access she had before?"). It is
+also where most adoptions stall.
+
+Propose two things that compose:
+
+1. **Capture-and-translate tool.** A new `ssh-rt-admin import` mode
+   scrapes the existing server config and produces a draft
+   enrollment YAML:
+   - `authorized_keys` entries → per-user `keys` enrollment
+   - `AllowGroups` / `AllowUsers` → server `groups` + user policies
+   - Existing AKC plugin output → pass-through allow rules
+   - PAM-restricted users → annotate (won't translate; operator
+     reviews)
+   The output is a starting point, not final policy — the operator
+   reviews and edits before applying. Adhoc-mode lab runs this on
+   the Phase-0 vanilla sshd state so the lab visibly demonstrates
+   "drop-in migration with no manual rewriting."
+
+2. **CA-side dual-enforce / shadow mode.** A per-server CA policy
+   flag enables a transitional state where every authorization
+   decision is evaluated **twice**:
+   - against the **legacy ruleset** (the imported authorized_keys
+     / AllowGroups / etc.)
+   - against the **new CA policy** (the operator's hand-curated
+     enrollments)
+
+   The CA returns the union (or chosen primary; configurable),
+   and **emits a divergence audit entry** for every case where
+   the two disagree:
+   - `legacy_allow_only`: legacy said yes, CA said no — operator
+     is more restrictive in the new policy (potentially desired,
+     or might be missed access that needs re-granting)
+   - `ca_allow_only`: CA said yes, legacy said no — operator
+     intentionally widened access (probably fine, but worth flagging)
+   - `both_deny`, `both_allow`: agreement (no event needed)
+
+   The operator runs in dual-enforce mode for as long as it takes
+   to see zero `legacy_allow_only` events for any user they still
+   want to support. Then they flip a config flag and the legacy
+   ruleset is dropped — single-source-of-truth enforcement going
+   forward.
+
+### Wins
+
+  - Removes the biggest adoption blocker: "I don't trust myself to
+    have translated 10 years of sshd config correctly into CA
+    policies."
+  - Users see **no disruption** during migration — they continue to
+    have exactly the access they had before, plus whatever the new
+    CA policy adds. Operators can iterate on the CA policy
+    asynchronously.
+  - Audit log becomes a discovery tool: "show me every user whose
+    legacy access we haven't replicated" → punch list.
+  - In the adhoc lab, the workflow is the most compelling demo
+    we can ship: "your existing servers worked at Phase 0; flip
+    on capture-and-translate; Phase 2 enforce works with the same
+    access patterns; admin tightens policy with zero user impact."
+
+### Cons / open questions
+
+  - Translation is heuristic, not lossless. PAM rules in particular
+    don't have a clean equivalent in CA policy. Need a clear
+    "couldn't translate; please review" output stream.
+  - Dual-enforce slows every auth decision (~2x evaluation per call).
+    Acceptable transitionally, not in steady state. Need a hard
+    deadline (e.g. dual-enforce auto-expires after 30 days unless
+    re-armed).
+  - The legacy-allow-only vs ca-allow-only labels are slightly
+    misleading when a user's legacy access is "all systems" and
+    the new policy intentionally narrows that. The audit needs to
+    distinguish "policy gap" from "policy tightening."
+  - Storing the legacy ruleset at the CA means the CA now has a
+    direct copy of every server's `authorized_keys`. Custody +
+    cleanup matter.
+
+### Composes with
+
+  - §6.5.1 of the wrapper detailed design (gated mode) — gated mode
+    leaves the operator's sshd policy in place at run-time. Legacy
+    capture-and-translate goes a step further: it lifts that policy
+    into the CA so the operator can eventually retire the original.
+    Gated mode is "preserve the policy where it lives"; this is
+    "move the policy into the CA."
+  - §9 (migration runbook) — capture-and-translate is the missing
+    automation that runbook would otherwise have to walk operators
+    through by hand.
+  - §11 (debug_sshd sideband audit) — sideband logs make divergence
+    cases inspectable in detail when the operator can't tell why
+    legacy said yes and CA said no.
+
+### LOC estimate
+
+  - `ssh-rt-admin import` parsers (authorized_keys, sshd_config,
+    AllowGroups, PAM-summary): ~500 lines.
+  - CA-side dual-enforce evaluator + divergence audit: ~300 lines.
+  - Adhoc-lab integration (a `Phase 0.5` step that runs import,
+    shows the operator the draft, applies it): ~200 lines.
+
+---
+
+## 14. Tutorial / walkthrough doc for the adhoc lab
+
+### Idea
+
+The adhoc msshd lab already provisions Phase 0 → 1 → 2 with operator
+flip scripts and a per-user README. Promote it to a **published
+walkthrough** that demonstrates every mssh feature: the CA call, the
+ephemeral inner cert, channel policy, source-CIDR, audit, the flip
+scripts, debug_sshd swap-in (once §11 lands), the gated mode (once
+§6.5.1 lands), the legacy-capture+dual-enforce (once §13 lands).
+
+This is mostly an **operational doc effort**, not new code:
+`docs/TUTORIAL.md` (or similar), walking the reader through running
+the lab, observing each behavior, and explaining what the operator
+would do at the equivalent step in a real adoption. Cross-link from
+the README so newcomers have a guided entry point.
+
+The tutorial reuses the adhoc lab as its sandbox — no separate
+infrastructure needed. The lab's `ADHOC_TEST_ENV.md` is the seed
+content for the tutorial's "Setup" section; the rest is per-feature
+exercises.
+
+### LOC estimate
+
+  - ~2000 lines of operator-facing markdown.
+  - Zero code, **assuming** the features it demonstrates (gated,
+    legacy capture, sideband audit, MCP) are already implemented.
+    Otherwise the tutorial's scope shrinks to whatever's available.
+
+---
+
 ## How items relate
 
 ```
@@ -729,6 +1010,24 @@ serves a web SSH client to anyone with the right mTLS cert in their
 browser. Composes naturally with item 7 (passkeys, where browser
 cert handling is painful) and item 8 (centralized client config, to
 feed the terminal UI's target picker).
+
+Items 11, 13, 14 are the **operator-adoption block** — each tackles
+a different obstacle to "we'd like to deploy this but the migration
+looks scary":
+  - **11 (debug_sshd swap-in + sideband audit)** gives the operator
+    a "what is the CA actually deciding?" inspection tool when
+    something looks wrong in production.
+  - **13 (legacy capture + dual-enforce)** removes the
+    re-translate-everything-from-scratch tax and makes the migration
+    auditably non-disruptive.
+  - **14 (tutorial)** is the operator-facing doc that ties the
+    adhoc lab to a guided walkthrough of every feature.
+
+Item 12 (MCP interface to the CA) is **orthogonal** to all of the
+above — a different surface (LLM-driven) onto the same CA data
+model. Mostly read-only diagnostics are the obvious starting point;
+trusted-AI writes are a second milestone with their own trust
+discussion.
 
 ---
 
