@@ -35,7 +35,7 @@ import pytest
 # Load lxc_helpers + randomized + log_helpers by absolute path so we don't
 # pollute sys.path with tests/lxc/.
 _HERE = Path(__file__).resolve().parent
-for _name in ('lxc_helpers', 'randomized', 'log_helpers'):
+for _name in ('lxc_helpers', 'randomized', 'log_helpers', 'msshd_helpers'):
     _spec = _ilu.spec_from_file_location(_name, _HERE / f'{_name}.py')
     _mod = _ilu.module_from_spec(_spec)
     sys.modules[_name] = _mod
@@ -50,6 +50,7 @@ from lxc_helpers import (
 )
 from randomized import Scenario, build_scenario, render_scenario
 from log_helpers import banner, section
+import msshd_helpers
 
 
 # The AsyncSSH server inside each SSH host listens here. 22 stays with sshd.
@@ -415,6 +416,146 @@ def provisioned_env(lxc_env, scenario, tmp_path_factory):
         'container_to_canonical': container_to_canonical,
         'canonical_to_container': canonical_to_container,
         'ssh_port': SSHRT_SERVER_PORT,
+    }
+
+
+@pytest.fixture(scope='session')
+def msshd_env(provisioned_env, tmp_path_factory):
+    """Provision msshd-enforce on every SSH container alongside the existing
+    debug_sshd (different port — debug_sshd on 2222, msshd on 2200).
+
+    Reuses provisioned_env's CA + user enrollment + per-server mTLS creds.
+    Adds:
+      - A locally-generated user-CA + per-user X.509 mTLS client cert
+      - A locally-generated wrapper user-CA (signs ephemeral inner certs)
+      - Each user's mTLS-derived ed25519 pubkey blob enrolled at the CA
+        alongside their existing SSH pubkey
+      - Wrapper TLS server cert + wrapper-user-CA pushed to each container
+      - msshd running in enforce mode on every SSH container
+      - /usr/local/bin/mssh wrapper script + per-user ~/.mssh/{cert,key,ca}.pem
+        on every container
+
+    Yields the provisioned_env dict augmented with:
+      - 'msshd_port' (2200)
+      - 'pki' (the dict returned by gen_user_ca_and_mtls_certs)
+      - 'mssh_as' (callable: mssh_as(username, from_container, target_canonical, *cmd))
+    """
+    M = msshd_helpers
+    from sshrt.admin.client import CAClient
+
+    section('Provisioning msshd-enforce on top of provisioned_env')
+    admin = CAClient(
+        base_url=provisioned_env['ca_url'],
+        admin_cert=provisioned_env['admin_cert'],
+        admin_key=provisioned_env['admin_key'],
+        ca_cert=provisioned_env['ca_cert'])
+
+    scenario = provisioned_env['scenario']
+    ips = provisioned_env['ips']
+
+    # 1. Generate the user-CA + per-user X.509 mTLS material LOCALLY.
+    pki_dir = tmp_path_factory.mktemp('msshd-pki')
+    usernames = [u.username for u in scenario.users]
+    container_ips = {h.container_name: ips[h.container_name]
+                     for h in scenario.hosts}
+    pki = M.gen_user_ca_and_mtls_certs(
+        pki_dir,
+        wrapper_host_sans=container_ips,
+        user_principals=usernames)
+
+    # 2. Generate the wrapper user-CA (signs ephemeral inner OpenSSH certs).
+    w_ca_dir = tmp_path_factory.mktemp('msshd-wrapper-user-ca')
+    w_ca_priv, w_ca_pub = M.gen_wrapper_user_ca(w_ca_dir)
+
+    # 3. Enrol each user's mTLS-cert ed25519 pubkey at the CA, alongside
+    #    their existing SSH pubkey.
+    for u in scenario.users:
+        M.enroll_user_mtls_pubkey(
+            admin, u.username,
+            pki['clients'][u.username]['ssh_pubkey_blob'])
+
+    # 4. Push wrapper cert material + start msshd on each SSH container.
+    server_creds = provisioned_env['server_creds']
+    for host in scenario.hosts:
+        c = host.container_name
+        canon = host.canonical_name
+        is_alp = (c == SSHRT_ALPINE)
+        creds = server_creds[canon]
+        # The provisioned_env's server mTLS creds are already in
+        # /etc/ssh-rt-auth/server/mtls-{cert,key}.pem. Re-push to the
+        # msshd-expected paths.
+        from pathlib import Path
+        creds_tmp = tmp_path_factory.mktemp(f'mtls-{canon}')
+        wrapper_mtls_cert = creds_tmp / 'cert.pem'
+        wrapper_mtls_key  = creds_tmp / 'key.pem'
+        wrapper_mtls_cert.write_text(creds['cert_pem'])
+        wrapper_mtls_key.write_text(creds['key_pem'])
+        import os as _os
+        _os.chmod(wrapper_mtls_key, 0o600)
+
+        M.push_msshd_cert_material(
+            c, alpine=is_alp,
+            wrapper_cert=pki['wrapper_certs'][c]['cert'],
+            wrapper_key=pki['wrapper_certs'][c]['key'],
+            user_ca_pub=pki['user_ca_path'],
+            wrapper_mtls_cert=wrapper_mtls_cert,
+            wrapper_mtls_key=wrapper_mtls_key,
+            ca_tls_root=provisioned_env['ca_cert'],
+            wrapper_user_ca_priv=w_ca_priv,
+            wrapper_user_ca_pub=w_ca_pub)
+
+        # provisioned_env creates user accounts via `adduser -D` (Alpine)
+        # or `useradd -m` (Ubuntu). Both leave the account locked
+        # ("!" in /etc/shadow). debug_sshd is tolerant; msshd's hermetic
+        # inner sshd uses real OpenSSH which rejects locked accounts.
+        # Unlock every user before msshd-enforce tries to log them in.
+        for u in scenario.users:
+            lxc_exec(c, 'sh', '-c',
+                     f"sed -i 's|^{u.username}:!:|{u.username}:*:|' "
+                     f"/etc/shadow", check=False)
+
+        M.start_msshd_enforce(c, ca_ip=ips[CA_HOST], alpine=is_alp)
+
+        # /usr/local/bin/mssh wrapper + per-user .mssh material.
+        M.install_mssh_wrapper_script(c)
+        for u in scenario.users:
+            M.push_mssh_per_user(
+                c, username=u.username,
+                user_cert=pki['clients'][u.username]['cert'],
+                user_key=pki['clients'][u.username]['key'],
+                user_ca=pki['user_ca_path'],
+                alpine=is_alp)
+        print(f'  msshd enforce up on {c} ({canon}) :{M.MSSHD_PORT}',
+              file=sys.stderr, flush=True)
+
+    # 5. Provide a helper closure for tests to drive mssh.
+    canon_to_container = provisioned_env['canonical_to_container']
+
+    def mssh_as(username: str, from_container: str,
+                target_canonical: str, *cmd: str,
+                timeout: int = 30):
+        """Run `mssh username@<target-ip>:2200 -- cmd...` from
+        `from_container`, as the in-container `username` (so $HOME is
+        their /home/<username>/.mssh)."""
+        target_container = canon_to_container[target_canonical]
+        target_ip = ips[target_container]
+        shell = (f'cd /home/{username} && '
+                 f'HOME=/home/{username} '
+                 f'/usr/local/bin/mssh '
+                 f'{username}@{target_ip}:{M.MSSHD_PORT} -- {" ".join(cmd)}'
+                 if cmd else
+                 f'cd /home/{username} && '
+                 f'HOME=/home/{username} '
+                 f'/usr/local/bin/mssh '
+                 f'{username}@{target_ip}:{M.MSSHD_PORT}')
+        return lxc_exec(from_container, 'su', '-', username, '-c', shell,
+                        check=False, timeout=timeout)
+
+    yield {
+        **provisioned_env,
+        'msshd_port': M.MSSHD_PORT,
+        'pki': pki,
+        'mssh_as': mssh_as,
     }
 
 
