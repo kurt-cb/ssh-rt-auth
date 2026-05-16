@@ -316,14 +316,14 @@ def _start_asyncssh_server(server: _Server) -> None:
     if c == ENG_NAME:
         lxc_exec(c, 'mkdir', '-p', '/run')
         lxc_exec(c, 'sh', '-c',
-                 f'cd /app && nohup {server_cmd} '
+                 f'cd /app && PYTHONPATH=/app/src nohup {server_cmd} '
                  '> /var/log/ssh-rt-auth-server.log 2>&1 & echo $! > '
                  '/run/ssh-rt-auth-server.pid')
     else:
         unit = (
             '[Unit]\nDescription=ssh-rt-auth AsyncSSH server\n'
             'After=network.target\n'
-            '[Service]\nWorkingDirectory=/app\n'
+            '[Service]\nWorkingDirectory=/app\nEnvironment="PYTHONPATH=/app/src"\n'
             f'ExecStart={server_cmd}\n'
             'Restart=on-failure\n'
             'StandardOutput=append:/var/log/ssh-rt-auth-server.log\n'
