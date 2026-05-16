@@ -947,7 +947,14 @@ _resolve_ip() {{
 }}
 
 _user_envvar() {{
+    # Helpers accept either form: root-admin or root_admin. The env
+    # var is always uppercase-underscore (ROOT_ADMIN_*); the Unix
+    # account / SSH login name is always lowercase-hyphen (root-admin).
     echo "$1" | tr 'a-z-' 'A-Z_'
+}}
+
+_user_unix_name() {{
+    echo "$1" | tr '_' '-'
 }}
 
 # -o IdentitiesOnly=yes ensures ssh offers ONLY the -i key, not
@@ -962,18 +969,19 @@ mssh_as() {{
         echo "unknown server: $server (try acct/sales/hr/eng/ca)" >&2
         return 1
     fi
-    local U; U=$(_user_envvar "$user")
+    local U unix
+    U=$(_user_envvar "$user"); unix=$(_user_unix_name "$user")
     local cert key
     eval "cert=\\$${{U}}_CRT"
     eval "key=\\$${{U}}_KEYPEM"
     if [ "$#" -eq 0 ]; then
         MSSH_CERT="$cert" MSSH_KEY="$key" MSSH_CA="$USER_CA" \\
             PYTHONPATH="$MSSH_SRC_DIR" \\
-            python3 -m sshrt.mssh "$user@$ip:$MSSHD_PORT"
+            python3 -m sshrt.mssh "$unix@$ip:$MSSHD_PORT"
     else
         MSSH_CERT="$cert" MSSH_KEY="$key" MSSH_CA="$USER_CA" \\
             PYTHONPATH="$MSSH_SRC_DIR" \\
-            python3 -m sshrt.mssh "$user@$ip:$MSSHD_PORT" -- "$@"
+            python3 -m sshrt.mssh "$unix@$ip:$MSSHD_PORT" -- "$@"
     fi
 }}
 
@@ -984,9 +992,10 @@ ssh_as() {{
         echo "unknown server: $server" >&2
         return 1
     fi
-    local U; U=$(_user_envvar "$user")
+    local U unix
+    U=$(_user_envvar "$user"); unix=$(_user_unix_name "$user")
     local key; eval "key=\\$${{U}}_KEY"
-    ssh -i "$key" $_SSH_OPTS -p $SSHD_PORT "$user@$ip" "$@"
+    ssh -i "$key" $_SSH_OPTS -p $SSHD_PORT "$unix@$ip" "$@"
 }}
 
 ssh_as_2200() {{
@@ -996,9 +1005,10 @@ ssh_as_2200() {{
         echo "unknown server: $server" >&2
         return 1
     fi
-    local U; U=$(_user_envvar "$user")
+    local U unix
+    U=$(_user_envvar "$user"); unix=$(_user_unix_name "$user")
     local key; eval "key=\\$${{U}}_KEY"
-    ssh -i "$key" $_SSH_OPTS -p $MSSHD_PORT "$user@$ip" "$@"
+    ssh -i "$key" $_SSH_OPTS -p $MSSHD_PORT "$unix@$ip" "$@"
 }}
 
 # Convenience: flip the lab between modes from the host. The script

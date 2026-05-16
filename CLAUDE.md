@@ -1,108 +1,90 @@
-# ssh-rt-auth
+# mssh
 
 Runtime, CA-mediated SSH authorization system.
 
 ## Project summary
 
-This system moves SSH authorization from the client to the server. Instead of
-clients holding authorization certs, the server queries a CA at connection time
-to get a short-lived X.509 authorization cert based on the client's identity.
-The client uses only their existing SSH key or OpenSSH cert — no changes needed.
+mssh moves SSH authorization out of the SSH protocol and into a
+separate, network-restricted CA. The server contacts the CA at
+every connection and gets a short-lived authorization back. The
+client uses only their existing SSH key — no client changes.
 
-The key architectural property: a stolen client credential is useless if the
-attacker can't reach the CA. Place the CA on a private network; stolen keys
-can't trigger authorization.
+The defining property: **a stolen client credential is useless if
+the attacker can't reach the CA.** Put the CA on a private
+network; stolen keys can't authorize from outside that network.
 
-## Architecture
+## Component naming
 
-Three components:
+Canonical names (Python package rename `sshrt` → `mssh` is pending
+but in flight):
 
-1. **SSH server with shim** — An SSH server calls the ssh-rt-auth shim
-   after userauth succeeds. The shim queries the CA over mTLS, caches
-   the response, and returns the authorization cert to the server.
-   Two production server tiers exist:
-     - **Tier 1 — msshd** (wrap-and-proxy): mTLS-terminating wrapper
-       in front of a hermetic, locked-down unmodified OpenSSH.
-     - **Tier 3 — AKC shim**: patched OpenSSH calls the shim via
-       AuthorizedKeysCommand.
-   A third module, `debug_sshd` (Python AsyncSSH), is a debug-only
-   server used to exercise the CA/shim path in isolation; it is NOT a
-   production tier.
+- **mssh** — the client (`python/src/sshrt/mssh.py`)
+- **msshd** — the server-side gateway daemon (`python/src/sshrt/msshd/`)
+- **mssh-ca** — the central CA service (`python/src/sshrt/ca/`)
+- **mssh-admin** — operator CLI (`python/src/sshrt/admin/`)
+- **debug_sshd** — debug-only AsyncSSH server (`python/src/sshrt/debug_sshd/`)
+  — not a production tier
+- **shim** (library) — shared "call the CA" code (`python/src/sshrt/shim/`)
 
-2. **Authorization CA** — REST API over mTLS. Receives identity blobs and
-   connection context from the shim, evaluates policy, mints X.509 authorization
-   certs. All policy decisions live here.
+Avoid the word "wrapper" — historical, ambiguous. Use "gateway"
+for msshd. The previous "Tier 1 / 2 / 3" framing is also retired;
+mssh has a single production server (msshd) plus the optional AKC
+shim (`python/src/sshrt/akc_shim/`) for unmodified-OpenSSH compat.
 
-3. **ssh-rt-admin CLI** — Management tool for enrolling servers, users, and
-   admins. Authenticated via admin mTLS certs with role-based access control.
+## Three operating modes
+
+msshd selects between three modes via `wrapper.yaml`:
+
+- `fallback` — pure TCP proxy to operator's existing sshd. No CA
+  call. Implemented.
+- `gated` — mTLS + CA approval, but forward to operator's existing
+  sshd for auth. **Deferred** (see design/future-ideas.md).
+- `enforce` — mTLS + CA call + ephemeral OpenSSH cert minted +
+  hermetic inner sshd. Implemented.
+
+Operator adoption journey: fallback → gated → enforce, reversible.
 
 ## Key design decisions
 
 - Authorization cert format: X.509 with custom extensions (settled, do not change)
-- Identity proof: bare SSH public key + OpenSSH cert (v1 scope, no X.509 client certs)
-- Server identity: via mTLS cert, not hostname. CA identifies server from mTLS handshake.
-- Raw blob forwarding: sshd/shim does not parse identity certs. CA does all parsing.
-- PoC language: Python (asyncssh as the SSH library inside msshd and the
-  debug-only debug_sshd; Flask for the CA; cryptography lib for X.509)
-- PoC minimum target: **Alpine + Python**. CA stays Python in production —
-  it runs on operator infrastructure, not constrained endpoints, so the
-  earlier "C/Mbed TLS CA" plan was dropped.
-- Production endpoint (Tier 1): **wrap-and-proxy** — mTLS-terminating wrapper
-  in front of a hermetic, locked-down unmodified OpenSSH. Three planned
-  language variants (top-level directories — no language mixing):
-  - `python/src/sshrt/msshd/` — PoC implementation (Phase 1 complete).
-  - `c/` — minimal C+Mbed TLS or C+wolfSSL for constrained Alpine-only
-    deployments. Implementation order: **C before Go** (per operator
-    preference).
-  - `go/` — production port.
-  See `design/ssh-rt-auth-detailed-wrapper.md`.
+- Identity proof: bare SSH public key + OpenSSH cert; X.509 client
+  cert from a separate user-facing CA
+- Server identity: via mTLS cert (subject), not hostname
+- Raw blob forwarding: msshd does NOT parse identity certs; the CA
+  does all parsing
+- Two distinct cert hierarchies, intentionally separate:
+  - **CA signing key** — authz certs + server/admin mTLS certs
+  - **User-facing CA** — mssh client mTLS certs + msshd's TLS server cert
+- **msshd's local user-CA** — third, internal key, signs ephemeral
+  OpenSSH user certs for the hermetic inner sshd. Never leaves the
+  msshd host.
 - No password auth, ever
 - Fail-closed: if CA unreachable, deny (unless emergency cert)
+- Implementation language: Python today. Go on Alpine is harder
+  than expected (musl support); Rust is the cleanest cross-distro
+  cross-language option. See design/future-ideas.md § distro packaging.
 
-## Design docs
+## Docs
 
-Read these before implementing — they contain the detailed specifications:
+### Operator-facing
 
-- `docs/ssh-rt-auth-doc-00-overview.md` — High-level overview, component diagrams, trust model
-- `docs/ssh-rt-auth-doc-02-ca-design.md` — CA design goals, API overview, enrollment model
-- `docs/ssh-rt-auth-detailed-shim.md` — Shim interface, cache, failover, sshd integration
-- `docs/ssh-rt-auth-detailed-rest-api.md` — Complete REST API spec (all endpoints, all fields)
-- `design/ssh-rt-auth-server-strategy.md` — Three-tier deployment model; wrapper is Tier 1
-- `design/ssh-rt-auth-wrapper-research.md` — Wrap-and-proxy vs greenfield decision; hermetic inner sshd design
-- `design/ssh-rt-auth-detailed-wrapper.md` — Implementation blueprint for the Tier 1 wrapper (Python/Go/Alpine variants)
-- `design/ssh-rt-auth-v2-enhancements.md` — v2 connection-context schema, reserved cert-extension OIDs, sshd-implementation policy
-- `design/ssh-rt-auth-phase2-ideas.md` — Deferred ideas (per-connection sshd, smart cards, HTTPS proxy, passkeys, 2FA, …)
-- `design/ssh-rt-auth-dropped-ideas.md` — Things we covered and dropped (greenfield C server, ssh-rt-wrapperd name, MITM SSH outer protocol, …)
-- `docs/ssh-rt-auth-detailed-ca-admin.md` — CA internals, enrollment DB schema, cert minting, admin CLI
+- `docs/overview.md` — what mssh is, when it fits
+- `docs/operations.md` — install, adopt, run, troubleshoot
 
-## PoC implementation phases
+### Design
 
-### Phase 1: CA and admin tool
-1. `ssh-rt-admin init` — generate CA signing key, bootstrap admin cert
-2. Enrollment YAML read/write (servers, users, admins, policies)
-3. `POST /v1/authorize` — identity parsing, policy evaluation, cert minting
-4. Admin API endpoints (server add, user add, key add, policy add)
-5. Admin authentication and role checking
-6. Audit logging (JSON Lines)
+- `design/architecture.md` — components, modes, hermetic inner sshd
+- `design/api.md` — REST + admin API contract + enrollment YAML
+- `design/security.md` — trust model + threat analysis
+- `design/future-ideas.md` — deferred features (read this before
+  proposing new ones — many ideas are captured here already)
 
-### Phase 2: Shim (Python)
-1. Python shim with mTLS client
-2. Cache (in-memory dict)
-3. Failover logic (try endpoints in order)
-4. Response validation (verify cert signature before caching)
+### Historical (don't write new content here; reference only)
 
-### Phase 3: SSH server integration (historical PoC plan)
-The original PoC integrated the shim via a Python AsyncSSH server
-(now `debug_sshd/`, kept for diagnostics). Production paths are now
-the Tier-1 wrapper (`msshd`) and the Tier-3 AKC shim.
-
-### Phase 4: End-to-end test
-1. ssh-rt-admin init → bootstrap
-2. Enroll a server, enroll a user with a key, add a policy
-3. Start CA, start SSH server
-4. Connect with standard SSH client → authorized session
-5. Connect with unauthorized key → denied
-6. Connect outside time window → denied
+- `archive/design/` — original 12 design docs that pre-date the
+  clean-room rewrite. Use older naming ("ssh-rt-auth", "Tier 1/2/3",
+  "Phase 1/2", "PoC"). Frequently more detailed than the new docs.
+- `archive/docs/` — original operator docs.
 
 ## Project structure
 
@@ -111,75 +93,32 @@ Operator-facing artifacts (configs, scripts, systemd, OpenSSH patches)
 live at the repo root and are language-neutral.
 
 ```
-ssh-rt-auth/
+mssh/
 ├── CLAUDE.md               # this file
 ├── README.md
 ├── INSTALLATION.md
-├── design/                 # design docs
-├── docs/                   # operator-facing docs (overview, REST API, ...)
-├── python/                 # Python implementation (PoC + Tier 1 wrapper)
+├── design/                 # clean-room design docs
+├── docs/                   # operator-facing docs
+├── archive/                # historical design + docs (internal reference)
+├── python/                 # current Python implementation
 │   ├── setup.py            # legacy-compat shim for editable install
 │   ├── pytest.ini
 │   ├── requirements.txt
-│   ├── src/sshrt/          # the package namespace
-│   │   ├── __init__.py
+│   ├── src/sshrt/          # package namespace (rename to `mssh` pending)
 │   │   ├── ca/             # CA server (Flask + mTLS)
-│   │   │   ├── server.py            # mTLS listener
-│   │   │   ├── authorize.py         # POST /v1/authorize handler
-│   │   │   ├── admin.py             # admin API handlers
-│   │   │   ├── policy.py            # policy evaluation engine
-│   │   │   ├── enrollment.py        # enrollment DB (YAML backend)
-│   │   │   ├── cert_minter.py       # X.509 cert generation
-│   │   │   ├── identity_parser.py   # SSH key/cert blob parsing
-│   │   │   ├── audit.py             # audit logging
-│   │   │   └── config.py            # CA config loading
-│   │   ├── admin/          # ssh-rt-admin CLI
-│   │   │   ├── main.py              # click CLI entry point
-│   │   │   ├── client.py            # mTLS HTTP client for admin API
-│   │   │   ├── key_parser.py        # SSH key/cert file parsing
-│   │   │   └── formatters.py
-│   │   ├── shim/           # AKC-style authorization shim
-│   │   │   ├── shim.py              # main shim logic
-│   │   │   ├── cache.py             # in-memory cert cache
-│   │   │   ├── sqlite_cache.py      # cross-process cert cache
-│   │   │   ├── ca_client.py         # mTLS HTTP client with failover
-│   │   │   └── config.py
-│   │   ├── debug_sshd/     # Debug-only AsyncSSH server (calls shim);
-│   │   │   └── ssh_server.py    # not a production tier — minimal CA-call
-│   │   │                        # surface for isolated debugging.
-│   │   ├── akc_shim/       # Tier 3 AuthorizedKeysCommand entry point
-│   │   │   └── openssh_shim.py
-│   │   ├── msshd/          # Tier 1 wrapper daemon
-│   │   │   ├── msshd.py             # entry point
-│   │   │   ├── listener.py          # fallback-mode TCP listener
-│   │   │   ├── enforce_listener.py  # enforce-mode mTLS listener
-│   │   │   ├── inner.py             # hermetic inner sshd lifecycle
-│   │   │   ├── userca.py            # local user-CA key + OpenSSH cert mint
-│   │   │   ├── policy.py            # X.509 ext → OpenSSH critical-options
-│   │   │   ├── proxy.py             # fallback byte proxy
-│   │   │   ├── ssh_proxy.py         # enforce-mode asyncssh proxy
-│   │   │   ├── ca.py                # CA client (wraps shim.ca_client)
-│   │   │   ├── config.py
-│   │   │   └── admin.py             # ssh-rt-wrapper-admin CLI
-│   │   └── mssh.py         # Tier 1 client CLI (single module)
+│   │   ├── admin/          # mssh-admin CLI
+│   │   ├── shim/           # shared "call the CA" library
+│   │   ├── debug_sshd/     # debug-only AsyncSSH server (not a tier)
+│   │   ├── akc_shim/       # OpenSSH AKC entry point (Tier-3 compat)
+│   │   ├── msshd/          # the gateway daemon
+│   │   └── mssh.py         # the client (single module)
 │   └── tests/
-│       ├── conftest.py
-│       ├── test_*.py                # host unit tests
-│       └── lxc/                     # LXC integration tests
-├── go/                     # future — full Go impl across the trio (placeholder)
-├── c/                      # future — minimal C for Alpine (placeholder)
-├── openssh-patches/        # absorbed: upstream-targeted patches for AKC
-│   ├── patches/                     # exported .patch files
-│   ├── NOTES.md                     # patch-plan rationale
-│   ├── README.md
-│   └── build.sh                     # apply + build helper
-├── config/                 # example operator configs (lang-neutral)
-│   ├── wrapper.yaml.example
-│   └── sshd_config.template
+├── go/                     # future — Go port (placeholder)
+├── c/                      # future — C for Alpine (placeholder)
+├── openssh-patches/        # upstream-targeted OpenSSH patches (AKC support)
+├── config/                 # example operator configs
 ├── scripts/                # operator scripts
-│   └── upgrade.sh                   # host upgrade / install / verify / rollback
-└── systemd/                # service unit files (lang-neutral)
-    └── msshd.service       # inner sshd is wrapper-supervised, no separate unit
+└── systemd/                # service unit files
 ```
 
 ## Dependencies
@@ -197,7 +136,9 @@ requests>=2.31
 
 - Author: Kurt Godwin (github.com/kurt-cb)
 - Keep code simple and readable
-- No over-engineering — this is a PoC
 - Comments explain why, not what
 - Error messages should be specific and actionable
 - All network errors fail-closed (deny access)
+- Avoid the word "wrapper" — use "gateway" for msshd
+- Avoid Phase / Tier / PoC framing in new docs — those were
+  intermediate; reference architecture.md for the canonical view
