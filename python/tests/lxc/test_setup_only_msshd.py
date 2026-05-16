@@ -233,7 +233,10 @@ def _push_authorized_keys(server: _Server,
                           user_keys: dict[str, dict]) -> None:
     """Concat the *allowed* users' pubkeys into each user's
     ~/.ssh/authorized_keys. The superuser's pubkey is appended to every
-    user's authorized_keys (so the superuser can su-via-ssh to any user).
+    user's authorized_keys (so the superuser can su-via-ssh to any user)
+    AND added to /root/.ssh/authorized_keys (so the superuser can ssh
+    in as root for admin config-push, modelling a real break-glass
+    admin path).
     """
     superkey = user_keys[SUPERUSER.username]['pub_line']
     for u in USERS:
@@ -247,6 +250,12 @@ def _push_authorized_keys(server: _Server,
         push_text(server.container, ak,
                   f'/home/{u.username}/.ssh/authorized_keys', mode='600',
                   owner=f'{u.username}:{u.username}')
+    # Superuser bypass: ssh root@server with their key works on every
+    # box. This is how an operator would drive the flip scripts.
+    lxc_exec(server.container, 'mkdir', '-p', '/root/.ssh')
+    lxc_exec(server.container, 'chmod', '700', '/root/.ssh')
+    push_text(server.container, superkey + '\n',
+              '/root/.ssh/authorized_keys', mode='600', owner='root:root')
 
 
 # ---------------------------------------------------------------------------
@@ -628,53 +637,135 @@ def _write_cleanup_script(path: Path) -> None:
     path.chmod(0o755)
 
 
-def _write_flip_scripts(out_dir: Path, ca_ip: str) -> None:
-    fallback = out_dir / 'flip-to-fallback.sh'
-    enforce  = out_dir / 'flip-to-enforce.sh'
-    fallback.write_text(
-        '#!/usr/bin/env bash\n'
-        '# Push fallback-mode wrapper.yaml to every server and restart\n'
-        '# msshd. After this, `ssh -p ' + str(MSSHD_PORT) + ' user@<ip>` works\n'
-        '# (transparently proxied to in-container sshd on 22).\n'
-        'set -eu\n'
-        + ''.join(
-            f'lxc exec {s.container} -- sh -c '
-            f"'cat > /etc/ssh-rt-auth/wrapper.yaml' <<'YAML'\n"
-            f'{_wrapper_yaml_fallback()}YAML\n'
-            f'lxc exec {s.container} -- '
-            + ('sh -c "fuser -k -9 ' + str(MSSHD_PORT) + '/tcp 2>/dev/null; '
-               'sleep 1; cd /app && PYTHONPATH=/app/src nohup /usr/bin/python3 '
-               '-m sshrt.msshd --config /etc/ssh-rt-auth/wrapper.yaml '
-               '> /var/log/ssh-rt-auth/msshd.log 2>&1 & '
-               'echo \\$! > /run/msshd.pid"\n'
-               if s.container == ENG_NAME
-               else 'systemctl restart msshd\n')
-            for s in SERVERS
+def _msshd_restart_cmd(server: _Server) -> str:
+    """Per-container shell snippet to restart msshd in-place."""
+    if _is_alpine(server.container):
+        return (
+            f'fuser -k -9 {MSSHD_PORT}/tcp 2>/dev/null; sleep 1; '
+            f'cd /app && PYTHONPATH=/app/src '
+            f'SSH_RT_AUTH_WRAPPER_STATE_DIR=/var/lib/ssh-rt-auth '
+            f'nohup /usr/bin/python3 -m sshrt.msshd '
+            f'--config /etc/ssh-rt-auth/wrapper.yaml '
+            f'> /var/log/ssh-rt-auth/msshd.log 2>&1 & '
+            f'echo $! > /run/msshd.pid'
         )
-        + 'echo "All servers in fallback mode."\n')
-    enforce.write_text(
-        '#!/usr/bin/env bash\n'
-        '# Push enforce-mode wrapper.yaml to every server and restart\n'
-        '# msshd. After this, `mssh user@<ip>:' + str(MSSHD_PORT) + '` works\n'
-        '# (CA-mediated, mTLS to the wrapper).\n'
-        'set -eu\n'
-        + ''.join(
-            f'lxc exec {s.container} -- sh -c '
-            f"'cat > /etc/ssh-rt-auth/wrapper.yaml' <<'YAML'\n"
-            f'{_wrapper_yaml_enforce(ca_ip)}YAML\n'
-            f'lxc exec {s.container} -- '
-            + ('sh -c "fuser -k -9 ' + str(MSSHD_PORT) + '/tcp 2>/dev/null; '
-               'sleep 1; cd /app && PYTHONPATH=/app/src nohup /usr/bin/python3 '
-               '-m sshrt.msshd --config /etc/ssh-rt-auth/wrapper.yaml '
-               '> /var/log/ssh-rt-auth/msshd.log 2>&1 & '
-               'echo \\$! > /run/msshd.pid"\n'
-               if s.container == ENG_NAME
-               else 'systemctl restart msshd\n')
-            for s in SERVERS
-        )
-        + 'echo "All servers in enforce mode."\n')
-    fallback.chmod(0o755)
-    enforce.chmod(0o755)
+    return 'systemctl restart msshd'
+
+
+def _flip_script(target_mode: str, yaml: str, ips: dict,
+                 ca_ip: str) -> str:
+    """Render a self-contained flip script that runs on the CA container.
+
+    Uses ssh root@<server> (root-admin's pubkey is in /root/authorized_keys
+    on every server) for the config-push step; verifies the new mode using
+    the transport that mode expects (mssh for enforce, ssh -p MSSHD_PORT
+    for fallback); reverts on verification failure.
+
+    Models an actual operator workflow — no `lxc exec` anywhere.
+    """
+    verify_cmd, verify_desc = ({
+        'enforce':  ('mssh root-admin@$ip:$MSSHD_PORT -- whoami',
+                     'mssh ↔ msshd (mTLS + CA-mediated)'),
+        'fallback': ('ssh $SSH_N -p $MSSHD_PORT root-admin@$ip whoami',
+                     'ssh -p ${MSSHD_PORT} (proxied via msshd to inner sshd)'),
+    })[target_mode]
+
+    rows = []
+    for s in SERVERS:
+        rows.append(f'{s.canonical}|{ips[s.container]}|{_msshd_restart_cmd(s)}')
+    server_table = '\n'.join(rows)
+
+    return f'''#!/bin/sh
+# /home/root-admin/flip-to-{target_mode}.sh
+#
+# Operator-grade flip script. Runs on the CA container as root-admin.
+# For each server: backs up the current wrapper.yaml, pushes the
+# {target_mode}-mode config, restarts msshd, verifies via
+# {verify_desc}, and reverts on failure.
+#
+# No `lxc exec` — only ssh (config push via the root@<server> backdoor
+# that root-admin's pubkey was added to during lab setup) and mssh
+# (post-flip verification when target=enforce).
+
+set -u
+
+SSH_KEY=/home/root-admin/.ssh/id_ed25519
+SSH_OPTS="-i $SSH_KEY -o StrictHostKeyChecking=no \\
+    -o UserKnownHostsFile=/dev/null -o BatchMode=yes -o ConnectTimeout=10"
+# -n on every ssh that doesn't consume stdin — otherwise ssh swallows
+# the pipe feeding our `while read` loop and we only process one server.
+SSH_N="$SSH_OPTS -n"
+MSSHD_PORT={MSSHD_PORT}
+CA_IP={ca_ip}
+
+export MSSH_CERT=/home/root-admin/.mssh/cert.pem
+export MSSH_KEY=/home/root-admin/.mssh/key.pem
+export MSSH_CA=/home/root-admin/.mssh/ca.pem
+
+# Heredoc would interfere with shell substitution; write the YAML to
+# a temp file and scp/cat it across.
+WRAPPER_YAML=$(cat <<'YAML'
+{yaml}YAML
+)
+
+flip_one() {{
+    name="$1"; ip="$2"; restart="$3"
+    printf '%-12s (%s) ... ' "$name" "$ip"
+
+    # Backup, push new, restart.
+    if ! ssh $SSH_N root@$ip \\
+            'cp /etc/ssh-rt-auth/wrapper.yaml /tmp/wrapper.yaml.bak' \\
+            2>/dev/null; then
+        echo "SSH UNREACHABLE — skipped"
+        return 1
+    fi
+    printf '%s' "$WRAPPER_YAML" | ssh $SSH_OPTS root@$ip \\
+        'cat > /etc/ssh-rt-auth/wrapper.yaml'
+    ssh $SSH_N root@$ip "$restart" >/dev/null 2>&1
+    sleep 3
+
+    # Verify with the post-flip transport.
+    if {verify_cmd} 2>/dev/null | grep -q '^root-admin$'; then
+        echo "OK ({target_mode})"
+        return 0
+    fi
+    # Verify failed: revert.
+    echo "FAILED — reverting"
+    ssh $SSH_N root@$ip \\
+        'cp /tmp/wrapper.yaml.bak /etc/ssh-rt-auth/wrapper.yaml' \\
+        2>/dev/null
+    ssh $SSH_N root@$ip "$restart" >/dev/null 2>&1
+    return 1
+}}
+
+SERVERS_TABLE='{server_table}'
+
+echo "Flipping all servers to mode={target_mode}..."
+echo "$SERVERS_TABLE" | while IFS='|' read -r name ip restart; do
+    [ -z "$name" ] && continue
+    # </dev/null protects the loop's pipe from being consumed by any
+    # ssh/mssh inside flip_one (mssh forwards stdin to the remote PTY).
+    flip_one "$name" "$ip" "$restart" </dev/null || true
+done
+
+echo
+echo "Done. Verify a session by running, e.g.:"
+echo "  mssh alice@$(echo \"$SERVERS_TABLE\" | head -1 | cut -d'|' -f2):$MSSHD_PORT -- whoami"
+'''
+
+
+def _push_flip_scripts_to_ca(ips: dict, ca_ip: str) -> None:
+    """Generate the two flip scripts and push them to /home/root-admin/
+    on the CA container."""
+    enforce_yaml  = _wrapper_yaml_enforce(ca_ip)
+    fallback_yaml = _wrapper_yaml_fallback()
+    for target_mode, yaml in (('enforce', enforce_yaml),
+                              ('fallback', fallback_yaml)):
+        script = _flip_script(target_mode, yaml, ips, ca_ip)
+        push_text(CA_NAME, script,
+                  f'/home/root-admin/flip-to-{target_mode}.sh',
+                  mode='755',
+                  owner=f'{SUPERUSER.username}:{SUPERUSER.username}')
 
 
 def _write_overview_md(path: Path, *, ips: dict, artifacts_dir: Path) -> None:
@@ -718,11 +809,25 @@ Phase 0 / 1 debugging.
   - `ssh -p {MSSHD_PORT} user@<ip>` — works ONLY when msshd is in fallback.
   - `ssh -p {VANILLA_SSHD_PORT} user@<ip>` — always works (bypasses msshd).
 
-Flip with:
+## Flipping modes — the operator workflow
+
+The flip scripts live on the **CA container** at
+`/home/root-admin/flip-to-{{enforce,fallback}}.sh`. They use ssh
+(root@server, via root-admin's pubkey added to /root/authorized_keys
+during setup) to push the new wrapper.yaml, then mssh (for enforce)
+or ssh -p {MSSHD_PORT} (for fallback) to verify. Verification failure
+triggers an automatic revert. No `lxc exec` — it's how a real operator
+would drive the transition.
 
 ```bash
-./flip-to-fallback.sh         # → Phase 1 behavior
-./flip-to-enforce.sh          # → Phase 2 behavior (default after setup)
+# As a real operator would do it:
+ssh root-admin@{CA_NAME}-ip          # (in production, this is your CA host)
+./flip-to-fallback.sh                # → Phase 1 behavior
+./flip-to-enforce.sh                 # → Phase 2 behavior (default after setup)
+
+# For the adhoc lab, skip the outer SSH and just exec on the container:
+lxc exec {CA_NAME} -- su - root-admin -c ./flip-to-fallback.sh
+lxc exec {CA_NAME} -- su - root-admin -c ./flip-to-enforce.sh
 ```
 
 ## Per-user material (host side)
@@ -1095,19 +1200,24 @@ def test_setup_adhoc_msshd_journey(request, tmp_path_factory):
     # =====================================================================
     # adhoc artifacts
     # =====================================================================
-    section('Writing adhoc artifacts (cleanup, flip scripts, env, README)')
+    section('Writing adhoc artifacts (cleanup, env, README)')
     _write_cleanup_script(invocation_cwd / 'cleanup_containers.sh')
-    _write_flip_scripts(invocation_cwd, ips[CA_NAME])
     _write_env_sh(invocation_cwd / 'adhoc-env.sh',
                   ips=ips, artifacts_dir=artifacts_dir)
     _write_overview_md(invocation_cwd / 'ADHOC_TEST_ENV.md',
                        ips=ips, artifacts_dir=artifacts_dir)
 
+    section('Pushing operator-grade flip scripts to /home/root-admin/ on CA')
+    _push_flip_scripts_to_ca(ips, ips[CA_NAME])
+
     section('SUCCESS — msshd adhoc lab is up at Phase 2 (enforce)')
     print(
         f'\n  source ./adhoc-env.sh    # exports ips, ports, key paths\n'
         f'  cat ./ADHOC_TEST_ENV.md  # full overview + examples\n'
-        f'  ./flip-to-fallback.sh    # Phase 1 (ssh -p 2200 works)\n'
-        f'  ./flip-to-enforce.sh     # Phase 2 (mssh works) — current state\n'
-        f'  ./cleanup_containers.sh  # tear it all down\n',
+        f'\n  # Flip scripts live ON the CA container — operator workflow.\n'
+        f'  # Drive them via lxc exec (no setup required) or by ssh-ing\n'
+        f'  # to the CA first if you want the realistic experience.\n'
+        f'\n  lxc exec {CA_NAME} -- su - root-admin -c ./flip-to-fallback.sh\n'
+        f'  lxc exec {CA_NAME} -- su - root-admin -c ./flip-to-enforce.sh\n'
+        f'\n  ./cleanup_containers.sh  # tear it all down\n',
         file=sys.stderr, flush=True)
