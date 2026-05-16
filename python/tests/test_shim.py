@@ -7,9 +7,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from sshrt.shim.ca_client import AuthorizeResult, CAClientFailedOver
-from sshrt.shim.cache import CacheEntry, CertCache
-from sshrt.shim.shim import STATUS_AUTHORIZED, STATUS_DENIED, STATUS_ERROR
+from mssh.shim.ca_client import AuthorizeResult, CAClientFailedOver
+from mssh.shim.cache import CacheEntry, CertCache
+from mssh.shim.shim import STATUS_AUTHORIZED, STATUS_DENIED, STATUS_ERROR
 
 
 # ---------------------------------------------------------------------------
@@ -58,8 +58,8 @@ def test_cache_lru_eviction():
 
 def _make_shim(ca_dir, monkeypatch):
     """Build a Shim with all certs from ca_dir and a stubbed CA client."""
-    from sshrt.shim.config import ShimConfig
-    from sshrt.shim.shim import Shim
+    from mssh.shim.config import ShimConfig
+    from mssh.shim.shim import Shim
     # Re-use the bootstrap admin's mTLS cert as the "server" mTLS cert just to
     # have a real key pair on disk. The shim never actually connects in tests.
     cfg = ShimConfig(
@@ -74,7 +74,7 @@ def _make_shim(ca_dir, monkeypatch):
 
 
 def test_shim_returns_authorized_and_caches(ca_dir, test_key, monkeypatch):
-    from sshrt.ca import cert_minter
+    from mssh.ca import cert_minter
     from cryptography.hazmat.primitives import serialization
 
     shim = _make_shim(ca_dir, monkeypatch)

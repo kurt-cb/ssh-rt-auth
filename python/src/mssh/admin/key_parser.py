@@ -12,7 +12,7 @@ import base64
 from dataclasses import dataclass
 from pathlib import Path
 
-from sshrt.ca.identity_parser import (CertIdentity, IdentityParseError,
+from mssh.ca.identity_parser import (CertIdentity, IdentityParseError,
                                 PubkeyIdentity, parse_identity,
                                 parse_openssh_cert, parse_pubkey_blob,
                                 sha256_fingerprint)

@@ -6,11 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from sshrt.ca import admin as admin_handlers
-from sshrt.ca import cert_minter
-from sshrt.ca.admin import AdminContext
-from sshrt.ca.audit import AuditLog
-from sshrt.ca.enrollment import Admin, Enrollment
+from mssh.ca import admin as admin_handlers
+from mssh.ca import cert_minter
+from mssh.ca.admin import AdminContext
+from mssh.ca.audit import AuditLog
+from mssh.ca.enrollment import Admin, Enrollment
 
 
 def _b64(b): return base64.b64encode(b).decode('ascii')

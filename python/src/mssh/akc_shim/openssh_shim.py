@@ -22,7 +22,7 @@ Configure in ``/etc/ssh/sshd_config.d/ssh-rt-auth.conf`` (or main config)::
     PubkeyAuthentication   yes
     AuthorizedKeysFile     none
     AuthorizedKeysCommand     /usr/local/bin/ssh-rt-auth-openssh-shim %u %t %k
-    AuthorizedKeysCommandUser sshrt
+    AuthorizedKeysCommandUser mssh
 
 And reload sshd::
 
@@ -56,10 +56,10 @@ Limitations of this hook (called out in tests/issues.md as well):
   AuthorizedKeysCommand only answers "is this key authorized" — yes/no.
 
 - The shim must run as a dedicated unprivileged user that can read the
-  shim's mTLS cert/key (mode 600). Typical install adds ``sshrt`` to a
-  ``sshrt`` group and chgrp's the keys to that group with mode 640. The
+  shim's mTLS cert/key (mode 600). Typical install adds ``mssh`` to a
+  ``mssh`` group and chgrp's the keys to that group with mode 640. The
   SQLite cache file must also be writeable by that user (typical owner is
-  ``sshrt:sshrt``, mode 0700 on the parent directory).
+  ``mssh:mssh``, mode 0700 on the parent directory).
 """
 from __future__ import annotations
 
@@ -157,8 +157,8 @@ def main(argv: list[str]) -> int:
 
     # Importing here (rather than at module top) keeps the script cheap to
     # type-check / lint without the project source on PYTHONPATH.
-    from sshrt.shim.shim import STATUS_AUTHORIZED, Shim
-    from sshrt.shim.config import ShimConfig
+    from mssh.shim.shim import STATUS_AUTHORIZED, Shim
+    from mssh.shim.config import ShimConfig
 
     cfg_path = os.environ.get(
         'SSHRT_SHIM_CONFIG', '/etc/ssh-rt-auth/shim.yaml')

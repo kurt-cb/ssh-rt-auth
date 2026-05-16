@@ -1,4 +1,4 @@
-"""Package metadata for sshrt.
+"""Package metadata for mssh.
 
 Real-world Python packages prefer pyproject.toml, but the venv we
 test against here ships setuptools 53 (no PEP 660 / editable
@@ -10,9 +10,9 @@ from setuptools import find_packages, setup
 
 
 setup(
-    name='ssh-rt-auth',
+    name='mssh',
     version='0.1.0',
-    description='Runtime, CA-mediated SSH authorization (PoC)',
+    description='Runtime, CA-mediated SSH authorization',
     author='Kurt Godwin',
     license='Apache-2.0',
     python_requires='>=3.9',
@@ -29,17 +29,17 @@ setup(
     entry_points={
         'console_scripts': [
             # CA + admin
-            'ssh-rt-auth-ca       = sshrt.ca.server:main',
-            'ssh-rt-admin         = sshrt.admin.main:cli',
-            # Debug-only AsyncSSH server (minimal CA-call surface; not
-            # a production tier — used for diagnosing CA/shim issues
-            # in isolation from the wrap-and-proxy machinery).
-            'ssh-rt-debug-sshd    = sshrt.debug_sshd.ssh_server:main',
-            # Tier 1 wrapper
-            'msshd                = sshrt.msshd.msshd:main',
-            'ssh-rt-wrapper-admin = sshrt.msshd.admin:main',
-            # Tier 1 client
-            'mssh                 = sshrt.mssh:main',
+            'mssh-ca              = mssh.ca.server:main',
+            'mssh-admin           = mssh.admin.main:cli',
+            # Server-side gateway daemon
+            'msshd                = mssh.msshd.msshd:main',
+            'msshd-admin          = mssh.msshd.admin:main',
+            # Client
+            'mssh                 = mssh.client:main',
+            # Debug-only AsyncSSH server — not a production tier.
+            # Minimal CA-call surface for diagnosing CA/policy issues
+            # in isolation from the gateway machinery.
+            'mssh-debug-sshd      = mssh.debug_sshd.ssh_server:main',
         ],
     },
 )

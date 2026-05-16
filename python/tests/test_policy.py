@@ -5,8 +5,8 @@ import datetime as _dt
 
 import pytest
 
-from sshrt.ca.enrollment import Policy, Server, User
-from sshrt.ca.policy import evaluate
+from mssh.ca.enrollment import Policy, Server, User
+from mssh.ca.policy import evaluate
 
 
 def _now():

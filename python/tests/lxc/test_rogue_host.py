@@ -66,7 +66,7 @@ def _raw_tls_handshake(host: str, port: int, *,
 def test_rogue_no_cert_handshake_fails(lxc_env):
     banner('Rogue host: no client cert (raw TLS handshake)')
     ips = lxc_env['ips']
-    host, port = ips['sshrt-lxc-ca'], 8443
+    host, port = ips['mssh-lxc-ca'], 8443
     with OpsLog('rogue', name='no-cert',
                 expect='handshake-fails') as op:
         ok, msg = _raw_tls_handshake(host, port, ca_bundle=lxc_env['ca_cert'])
@@ -111,7 +111,7 @@ def rogue_self_signed_cert(tmp_path_factory):
 def test_rogue_self_signed_handshake_fails(lxc_env, rogue_self_signed_cert):
     banner('Rogue host: self-signed cert (raw TLS handshake)')
     ips = lxc_env['ips']
-    host, port = ips['sshrt-lxc-ca'], 8443
+    host, port = ips['mssh-lxc-ca'], 8443
     cert_path, key_path = rogue_self_signed_cert
     with OpsLog('rogue', name='self-signed',
                 expect='handshake-fails') as op:

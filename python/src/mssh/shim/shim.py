@@ -23,7 +23,7 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519, padding, rsa
 
-from sshrt.ca.identity_parser import sha256_fingerprint
+from mssh.ca.identity_parser import sha256_fingerprint
 from .ca_client import CAClient, CAClientFailedOver
 from .cache import CacheEntry, CertCache
 from .sqlite_cache import SqliteCertCache

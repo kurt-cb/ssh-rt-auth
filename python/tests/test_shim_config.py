@@ -4,7 +4,7 @@ from __future__ import annotations
 import pytest
 import yaml
 
-from sshrt.shim.config import ShimConfig
+from mssh.shim.config import ShimConfig
 
 
 def test_load_minimal(tmp_path):

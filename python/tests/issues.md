@@ -406,7 +406,7 @@ sshd → AuthorizedKeysCommand → ssh-rt-authd-cli  (tiny client, ~5 ms)
 ```
 
 - **Transport:** Unix domain socket at `/run/ssh-rt-auth/authd.sock`
-  with mode 0660, owner `root:sshrt`. Filesystem permissions are the
+  with mode 0660, owner `root:mssh`. Filesystem permissions are the
   auth — no in-protocol handshake needed.
 - **Wire format:** newline-delimited JSON, one request → one response.
   ~30 LOC client. Easy to debug with `socat`.

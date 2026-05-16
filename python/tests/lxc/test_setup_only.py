@@ -3,11 +3,11 @@
 What this test does (one big function, no assertions of substance):
 
   1. Provisions a fresh set of LXC containers with FIXED names:
-       sshrt-adhoc-ca           CA + ssh-rt-admin
-       sshrt-adhoc-acct         Accounting SSH server
-       sshrt-adhoc-sales        Sales SSH server
-       sshrt-adhoc-hr           HR SSH server
-       sshrt-adhoc-eng          Engineering SSH server (Alpine, for variety)
+       mssh-adhoc-ca           CA + ssh-rt-admin
+       mssh-adhoc-acct         Accounting SSH server
+       mssh-adhoc-sales        Sales SSH server
+       mssh-adhoc-hr           HR SSH server
+       mssh-adhoc-eng          Engineering SSH server (Alpine, for variety)
 
   2. Enrolls four department servers and eight regular users (two per
      department), plus one **superuser** identity (``root-admin``) whose
@@ -74,11 +74,11 @@ pytestmark = [pytest.mark.lxc, pytest.mark.setup_only]
 # Fixed topology
 # ---------------------------------------------------------------------------
 
-CA_NAME    = 'sshrt-adhoc-ca'
-ACCT_NAME  = 'sshrt-adhoc-acct'
-SALES_NAME = 'sshrt-adhoc-sales'
-HR_NAME    = 'sshrt-adhoc-hr'
-ENG_NAME   = 'sshrt-adhoc-eng'
+CA_NAME    = 'mssh-adhoc-ca'
+ACCT_NAME  = 'mssh-adhoc-acct'
+SALES_NAME = 'mssh-adhoc-sales'
+HR_NAME    = 'mssh-adhoc-hr'
+ENG_NAME   = 'mssh-adhoc-eng'
 
 SSH_CONTAINERS = [ACCT_NAME, SALES_NAME, HR_NAME, ENG_NAME]
 ALL_CONTAINERS = [CA_NAME] + SSH_CONTAINERS
@@ -191,7 +191,7 @@ def _keygen_in_container(*, container: str, username: str, tool: str,
     with both ``ssh`` and ``dbclient``. The public-key line is extracted
     with ``dropbearkey -y``.
     """
-    from sshrt.ca.identity_parser import sha256_fingerprint
+    from mssh.ca.identity_parser import sha256_fingerprint
 
     _ensure_unix_account(container, username)
     home_ssh = f'/home/{username}/.ssh'
@@ -307,7 +307,7 @@ def _start_asyncssh_server(server: _Server) -> None:
     """systemd (Ubuntu) or nohup (Alpine) to start the AsyncSSH server."""
     c = server.container
     server_cmd = (
-        '/usr/bin/python3 -m sshrt.debug_sshd.ssh_server '
+        '/usr/bin/python3 -m mssh.debug_sshd.ssh_server '
         '--shim-config /etc/ssh-rt-auth/server/shim.yaml '
         '--host-key /etc/ssh-rt-auth/server/host-key '
         '--users-file /etc/ssh-rt-auth/server/users.allowed '
@@ -411,7 +411,7 @@ If you try a denied server (any container outside your department) you
 should see "Permission denied (publickey,password,…)". The CA's audit log
 will show the denial reason; tail it on the CA host:
 
-    lxc exec sshrt-adhoc-ca -- tail -f /var/log/ssh-rt-auth/audit.jsonl
+    lxc exec mssh-adhoc-ca -- tail -f /var/log/ssh-rt-auth/audit.jsonl
 
 ## Server inventory
 
@@ -427,9 +427,9 @@ will show the denial reason; tail it on the CA host:
 
 def test_setup_adhoc_environment(request, tmp_path_factory):
     """Provision the ad-hoc lab. Persists everything; does NOT tear down."""
-    from sshrt.ca import cert_minter
-    from sshrt.admin.client import CAClient
-    from sshrt.admin.key_parser import b64_blob, parse_key_text
+    from mssh.ca import cert_minter
+    from mssh.admin.client import CAClient
+    from mssh.admin.key_parser import b64_blob, parse_key_text
 
     invocation_cwd = Path(os.getcwd()).resolve()
     artifacts_dir  = invocation_cwd / 'adhoc-keys'
@@ -494,7 +494,7 @@ def test_setup_adhoc_environment(request, tmp_path_factory):
     section('Initializing CA')
     lxc_exec(CA_NAME, 'sh', '-c',
              'PYTHONPATH=/app/src python3 -c "'
-             'from sshrt.ca.cert_minter import bootstrap_ca; '
+             'from mssh.ca.cert_minter import bootstrap_ca; '
              f"bootstrap_ca('/etc/ssh-rt-auth/ca', "
              f"tls_server_sans=['DNS:localhost','IP:127.0.0.1',"
              f"'IP:{ips[CA_NAME]}'])\"",
@@ -525,7 +525,7 @@ def test_setup_adhoc_environment(request, tmp_path_factory):
     push_text(CA_NAME,
               '[Unit]\nDescription=ssh-rt-auth CA\nAfter=network.target\n'
               '[Service]\nWorkingDirectory=/app\nEnvironment="PYTHONPATH=/app/src"\n'
-              'ExecStart=/usr/bin/python3 -m sshrt.ca.server --config '
+              'ExecStart=/usr/bin/python3 -m mssh.ca.server --config '
               '/etc/ssh-rt-auth/ca-config.yaml\nRestart=on-failure\n'
               '[Install]\nWantedBy=multi-user.target\n',
               '/etc/systemd/system/ssh-rt-auth-ca.service')
@@ -970,7 +970,7 @@ def _setup_command_log_section(*, ips: dict, user_keys: dict) -> list[str]:
         '# (executed inside the CA container)',
         'mkdir -p /etc/ssh-rt-auth/ca',
         'python3 -c "',
-        '  from sshrt.ca.cert_minter import bootstrap_ca',
+        '  from mssh.ca.cert_minter import bootstrap_ca',
         '  bootstrap_ca(\'/etc/ssh-rt-auth/ca\',',
         '               tls_server_sans=[\'DNS:localhost\',\'IP:127.0.0.1\','
         f'\'IP:$CA_IP\'])"',
@@ -1118,7 +1118,7 @@ def _setup_command_log_section(*, ips: dict, user_keys: dict) -> list[str]:
         'Plus a systemd unit (Ubuntu) or a `nohup`-launched process (Alpine) that runs:',
         '',
         '```',
-        'python3 -m sshrt.debug_sshd.ssh_server \\',
+        'python3 -m mssh.debug_sshd.ssh_server \\',
         '   --shim-config /etc/ssh-rt-auth/server/shim.yaml \\',
         '   --host-key    /etc/ssh-rt-auth/server/host-key \\',
         '   --users-file  /etc/ssh-rt-auth/server/users.allowed \\',

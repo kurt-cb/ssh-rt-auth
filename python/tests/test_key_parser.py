@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from sshrt.admin.key_parser import parse_key_file, parse_key_text
+from mssh.admin.key_parser import parse_key_file, parse_key_text
 
 
 def test_parse_pubkey_line(test_key):

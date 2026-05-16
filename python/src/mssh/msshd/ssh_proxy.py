@@ -96,9 +96,9 @@ async def proxy_to_inner_ssh(
     asyncssh against the inner sshd.
 
     Cert-mandated overrides:
-      - ``forced_command`` (from sshrtauth-force-command) overrides
+      - ``forced_command`` (from mssh-force-command) overrides
         the client's ``command`` field if set.
-      - ``forced_env`` (from sshrtauth-environment) overrides /
+      - ``forced_env`` (from mssh-environment) overrides /
         augments the client's ``env`` map.
     """
     # ---- 1. read header ----

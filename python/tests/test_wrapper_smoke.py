@@ -112,7 +112,7 @@ def test_fallback_daemon_proxies_bytes(tmp_path):
     src_dir = Path(__file__).resolve().parent.parent / 'src'
     env = {**os.environ, 'PYTHONPATH': str(src_dir)}
     proc = subprocess.Popen(
-        [sys.executable, '-m', 'sshrt.msshd', '--config', str(cfg)],
+        [sys.executable, '-m', 'mssh.msshd', '--config', str(cfg)],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         cwd=str(Path(__file__).resolve().parent.parent),
         env=env,
@@ -162,7 +162,7 @@ def test_fallback_daemon_rejects_no_fallback_target(tmp_path):
     src_dir = Path(__file__).resolve().parent.parent / 'src'
     env = {**os.environ, 'PYTHONPATH': str(src_dir)}
     proc = subprocess.Popen(
-        [sys.executable, '-m', 'sshrt.msshd', '--config', str(cfg)],
+        [sys.executable, '-m', 'mssh.msshd', '--config', str(cfg)],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         cwd=str(Path(__file__).resolve().parent.parent),
         env=env,

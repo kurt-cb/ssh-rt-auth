@@ -1,4 +1,4 @@
-"""Tests for sshrt.mssh — pure-data helpers + outer-protocol-v1
+"""Tests for mssh.client — pure-data helpers + outer-protocol-v1
 header / ack encoding."""
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import os
 
 import pytest
 
-from sshrt.mssh import (DEFAULT_WRAPPER_PORT, Identity,
+from mssh.client import (DEFAULT_WRAPPER_PORT, Identity,
                                   PROTOCOL_VERSION, Target,
                                   build_header, load_config, parse_ack,
                                   parse_target, resolve_identity,

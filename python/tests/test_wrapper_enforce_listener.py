@@ -1,4 +1,4 @@
-"""Tests for sshrt.msshd.enforce_listener helper functions."""
+"""Tests for mssh.msshd.enforce_listener helper functions."""
 from __future__ import annotations
 
 import datetime as _dt
@@ -8,8 +8,8 @@ from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519
 
-from sshrt.ca.identity_parser import (parse_pubkey_blob, sha256_fingerprint)
-from sshrt.msshd.enforce_listener import _ssh_pubkey_blob_from_cert
+from mssh.ca.identity_parser import (parse_pubkey_blob, sha256_fingerprint)
+from mssh.msshd.enforce_listener import _ssh_pubkey_blob_from_cert
 
 
 def _mint_ed25519_cert() -> bytes:

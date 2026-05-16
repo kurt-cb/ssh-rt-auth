@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 # Make the package importable without pip-installing. python/src/ holds
-# the sshrt namespace. We deliberately don't rely on `pip install -e .`
+# the mssh namespace. We deliberately don't rely on `pip install -e .`
 # because older distro venvs ship setuptools<64 which doesn't support
 # PEP 660 editable installs.
 SRC_ROOT = Path(__file__).resolve().parent.parent / 'src'
@@ -64,7 +64,7 @@ class TestKey:
     def generate(cls, comment: str = 'test') -> 'TestKey':
         key = ed25519.Ed25519PrivateKey.generate()
         blob = ed25519_pubkey_blob(key.public_key())
-        from sshrt.ca.identity_parser import sha256_fingerprint
+        from mssh.ca.identity_parser import sha256_fingerprint
         return cls(
             private=key,
             public_blob=blob,
@@ -94,7 +94,7 @@ def test_keys():
 @pytest.fixture
 def ca_dir(tmp_path):
     """A freshly bootstrapped CA directory (no Flask running yet)."""
-    from sshrt.ca.cert_minter import bootstrap_ca
+    from mssh.ca.cert_minter import bootstrap_ca
     d = tmp_path / 'ca'
     bootstrap_ca(d, tls_server_sans=['DNS:localhost', 'IP:127.0.0.1'])
     # Seed enrollment file with bootstrap admin (as the CLI's `init` does).

@@ -33,9 +33,9 @@ a patch fails to apply.
 | 0001 | Instrumentation | obsoleted | ~20 |
 | 0002b | `SSH_CONNECTION_CONTEXT` JSON env | **dropped (2026-05-14)** — subsumed by Tier 1 wrapper; small Tier 3 cohort doesn't justify maintenance cost | ~80 |
 | 0004 | `AuthorizationModule` directive | deferred | ~500–800 |
-| 0005 | `sshrtauth-channel-policy` enforcement | deferred | ~80 |
-| 0006 | `sshrtauth-force-command` enforcement | deferred | ~50 |
-| 0006b | `sshrtauth-environment` enforcement | deferred | ~30 |
+| 0005 | `mssh-channel-policy` enforcement | deferred | ~80 |
+| 0006 | `mssh-force-command` enforcement | deferred | ~50 |
+| 0006b | `mssh-environment` enforcement | deferred | ~30 |
 | 0007 | `CheckExpireCommand` + session timer | deferred | ~200 |
 | 0007b | `AuthorizationAuditCommand` | deferred | ~50 |
 | 0009–0012 | v2 OID enforcement (session-bind, host-key-pin, crypto-floor, auth-method) | deferred | ~30 each |
@@ -366,7 +366,7 @@ consumer.
 
 ---
 
-## 0005 — enforce `sshrtauth-channel-policy` on channel-open
+## 0005 — enforce `mssh-channel-policy` on channel-open
 
 **Goal:** when the session has a stored channel-policy extension,
 every `channel_input_open_request` checks the channel type against
@@ -384,7 +384,7 @@ if not present.
 
 ---
 
-## 0006 — enforce `sshrtauth-force-command`
+## 0006 — enforce `mssh-force-command`
 
 **Goal:** when the cert carries a force-command extension, override
 the client's exec / shell request with the specified command. Mirrors

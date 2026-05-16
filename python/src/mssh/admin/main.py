@@ -9,7 +9,7 @@ from typing import Any
 import click
 import yaml
 
-from sshrt.ca.cert_minter import bootstrap_ca
+from mssh.ca.cert_minter import bootstrap_ca
 
 from . import formatters
 from .client import CAClient, CAClientError

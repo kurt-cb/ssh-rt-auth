@@ -6,11 +6,11 @@ the ssh-rt-auth flow end-to-end.
 ## Topology
 
 ```
-sshrt-lxc-ca       Ubuntu 22.04   Flask CA + ssh-rt-admin
-sshrt-lxc-u1       Ubuntu 22.04   sshd + Python shim
-sshrt-lxc-u2       Ubuntu 22.04   sshd + Python shim
-sshrt-lxc-u3       Ubuntu 22.04   sshd + Python shim
-sshrt-lxc-alpine   Alpine 3       sshd + Python shim   (cross-distro coverage)
+mssh-lxc-ca       Ubuntu 22.04   Flask CA + ssh-rt-admin
+mssh-lxc-u1       Ubuntu 22.04   sshd + Python shim
+mssh-lxc-u2       Ubuntu 22.04   sshd + Python shim
+mssh-lxc-u3       Ubuntu 22.04   sshd + Python shim
+mssh-lxc-alpine   Alpine 3       sshd + Python shim   (cross-distro coverage)
 ```
 
 All four SSH hosts host the same Unix-user matrix (8 regular users + 2
@@ -66,10 +66,10 @@ While the containers are still up:
 
 ```bash
 # Tail snoopy on the CA host
-lxc exec sshrt-lxc-ca -- tail -f /root/systemlogs/snoopy.log
+lxc exec mssh-lxc-ca -- tail -f /root/systemlogs/snoopy.log
 
 # Or on an SSH server while you reproduce an issue
-lxc exec sshrt-lxc-u1 -- tail -f /root/systemlogs/snoopy.log
+lxc exec mssh-lxc-u1 -- tail -f /root/systemlogs/snoopy.log
 ```
 
 Useful for:

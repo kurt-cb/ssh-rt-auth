@@ -20,7 +20,7 @@ pytestmark = pytest.mark.lxc
 
 
 def _admin_client(lxc_env):
-    from sshrt.admin.client import CAClient
+    from mssh.admin.client import CAClient
     return CAClient(
         base_url=lxc_env['ca_url'],
         admin_cert=lxc_env['admin_cert'],
@@ -59,7 +59,7 @@ def test_enroll_user_and_key(lxc_env, tmp_path):
     """ssh-keygen a key on the test host, enroll user + key, attach a policy."""
     import base64
     import subprocess
-    from sshrt.admin.key_parser import b64_blob, parse_key_file
+    from mssh.admin.key_parser import b64_blob, parse_key_file
 
     keypath = tmp_path / 'alice_ed25519'
     subprocess.run(['ssh-keygen', '-t', 'ed25519', '-f', str(keypath),

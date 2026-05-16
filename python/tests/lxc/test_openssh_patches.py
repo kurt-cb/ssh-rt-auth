@@ -34,7 +34,7 @@ Architecture:
 
 Opt-in marker: ``-m openssh_patches``.
 
-Container name: ``sshrt-patches-test``.
+Container name: ``mssh-patches-test``.
 """
 from __future__ import annotations
 
@@ -65,7 +65,7 @@ from log_helpers import banner, section
 pytestmark = [pytest.mark.lxc, pytest.mark.openssh_patches]
 
 
-CONTAINER = 'sshrt-patches-test'
+CONTAINER = 'mssh-patches-test'
 SSHD_PORT = 12222
 
 
@@ -205,8 +205,8 @@ def test_openssh_patches_end_to_end(request):
              'cd /build/openssh-portable && autoreconf -f -i', timeout=120)
     lxc_exec(CONTAINER, 'sh', '-c',
              'cd /build/openssh-portable && ./configure '
-             '--prefix=/opt/sshrt-sshd --sysconfdir=/opt/sshrt-sshd/etc '
-             '--with-privsep-path=/var/empty-sshrt --without-pam',
+             '--prefix=/opt/mssh-sshd --sysconfdir=/opt/mssh-sshd/etc '
+             '--with-privsep-path=/var/empty-mssh --without-pam',
              timeout=240)
     lxc_exec(CONTAINER, 'sh', '-c',
              'cd /build/openssh-portable && make sshd sshd-session -j$(nproc)',
@@ -215,15 +215,15 @@ def test_openssh_patches_end_to_end(request):
     # post-steps). ssh-sk-helper is only needed at runtime for FIDO/SK
     # keys, which we don't exercise — copy if present, skip otherwise.
     lxc_exec(CONTAINER, 'sh', '-c',
-             'mkdir -p /opt/sshrt-sshd/sbin /opt/sshrt-sshd/libexec '
-             '/var/empty-sshrt && '
-             'cp /build/openssh-portable/sshd /opt/sshrt-sshd/sbin/sshd && '
+             'mkdir -p /opt/mssh-sshd/sbin /opt/mssh-sshd/libexec '
+             '/var/empty-mssh && '
+             'cp /build/openssh-portable/sshd /opt/mssh-sshd/sbin/sshd && '
              'cp /build/openssh-portable/sshd-session '
-             '/opt/sshrt-sshd/libexec/sshd-session && '
+             '/opt/mssh-sshd/libexec/sshd-session && '
              '(cp /build/openssh-portable/ssh-sk-helper '
-             '/opt/sshrt-sshd/libexec/ssh-sk-helper 2>/dev/null || true) && '
-             'chown root:root /opt/sshrt-sshd/sbin/sshd '
-             '/opt/sshrt-sshd/libexec/sshd-session',
+             '/opt/mssh-sshd/libexec/ssh-sk-helper 2>/dev/null || true) && '
+             'chown root:root /opt/mssh-sshd/sbin/sshd '
+             '/opt/mssh-sshd/libexec/sshd-session',
              timeout=30)
 
     section('Creating privsep user (required by sshd at startup)')
@@ -231,18 +231,18 @@ def test_openssh_patches_end_to_end(request):
     # manually. The privsep user only needs to exist; nothing else.
     lxc_exec(CONTAINER, 'sh', '-c',
              'id sshd >/dev/null 2>&1 || '
-             'useradd -r -d /var/empty-sshrt -s /usr/sbin/nologin sshd')
+             'useradd -r -d /var/empty-mssh -s /usr/sbin/nologin sshd')
 
     section('Generating host + user keys (in-container, root-owned)')
     lxc_exec(CONTAINER, 'sh', '-c',
-             'mkdir -p /etc/sshrt-sshd && '
+             'mkdir -p /etc/mssh-sshd && '
              "ssh-keygen -t ed25519 -N '' "
-             "-f /etc/sshrt-sshd/host_ed25519 -q && "
+             "-f /etc/mssh-sshd/host_ed25519 -q && "
              "ssh-keygen -t ed25519 -N '' "
-             "-f /etc/sshrt-sshd/user_key -q && "
-             'chmod 600 /etc/sshrt-sshd/host_ed25519 '
-             '/etc/sshrt-sshd/user_key && '
-             'chown -R root:root /etc/sshrt-sshd')
+             "-f /etc/mssh-sshd/user_key -q && "
+             'chmod 600 /etc/mssh-sshd/host_ed25519 '
+             '/etc/mssh-sshd/user_key && '
+             'chown -R root:root /etc/mssh-sshd')
 
     section('Installing the test AKC shim (root-owned)')
     akc_shim = '''#!/bin/bash
@@ -253,7 +253,7 @@ def test_openssh_patches_end_to_end(request):
   echo "SSH_AKC_PHASE=${SSH_AKC_PHASE:-<unset>}"
   echo "argv: $@"
 } >> /tmp/akc.log
-cat /etc/sshrt-sshd/user_key.pub
+cat /etc/mssh-sshd/user_key.pub
 '''
     push_text(CONTAINER, akc_shim, '/usr/local/bin/akc-shim.sh')
     lxc_exec(CONTAINER, 'chmod', '755', '/usr/local/bin/akc-shim.sh')
@@ -264,8 +264,8 @@ cat /etc/sshrt-sshd/user_key.pub
     sshd_conf = (
         f'ListenAddress 127.0.0.1\n'
         f'Port {SSHD_PORT}\n'
-        f'HostKey /etc/sshrt-sshd/host_ed25519\n'
-        f'PidFile /run/sshrt-sshd.pid\n'
+        f'HostKey /etc/mssh-sshd/host_ed25519\n'
+        f'PidFile /run/mssh-sshd.pid\n'
         f'AuthenticationMethods publickey\n'
         f'PubkeyAuthentication yes\n'
         f'AuthorizedKeysFile /dev/null\n'
@@ -282,13 +282,13 @@ cat /etc/sshrt-sshd/user_key.pub
         f'PrintMotd no\n'
         f'LogLevel VERBOSE\n'
     )
-    push_text(CONTAINER, sshd_conf, '/etc/sshrt-sshd/sshd_config')
+    push_text(CONTAINER, sshd_conf, '/etc/mssh-sshd/sshd_config')
 
     section('Starting patched sshd')
     lxc_exec(CONTAINER, 'sh', '-c',
              'rm -f /tmp/akc.log /tmp/sshd.log && '
-             '/opt/sshrt-sshd/sbin/sshd '
-             '-f /etc/sshrt-sshd/sshd_config -E /tmp/sshd.log')
+             '/opt/mssh-sshd/sbin/sshd '
+             '-f /etc/mssh-sshd/sshd_config -E /tmp/sshd.log')
     wait_for_port(CONTAINER, SSHD_PORT, max_wait=15)
 
     section('Driving one SSH connection — exercises both query + verify '
@@ -297,7 +297,7 @@ cat /etc/sshrt-sshd/user_key.pub
                  f'ssh -o BatchMode=yes -o StrictHostKeyChecking=no '
                  f'-o UserKnownHostsFile=/dev/null '
                  f'-o IdentitiesOnly=yes '
-                 f'-i /etc/sshrt-sshd/user_key -p {SSHD_PORT} '
+                 f'-i /etc/mssh-sshd/user_key -p {SSHD_PORT} '
                  f'root@127.0.0.1 echo CONNECTED',
                  check=False, timeout=20)
     assert 'CONNECTED' in (r.stdout or ''), \

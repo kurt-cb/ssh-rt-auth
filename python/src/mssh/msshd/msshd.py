@@ -7,7 +7,7 @@ Phase 1B: enforce mode. TLS-terminating listener + CA call + cert mint
 + inner-sshd-managed handoff via asyncssh.
 
 Invocation:
-    python -m sshrt.msshd --config /etc/ssh-rt-auth/wrapper.yaml
+    python -m mssh.msshd --config /etc/ssh-rt-auth/wrapper.yaml
 """
 from __future__ import annotations
 

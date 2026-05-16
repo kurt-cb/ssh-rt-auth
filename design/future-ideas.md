@@ -35,10 +35,10 @@ Outer mTLS accept
   ├── CA call → authz cert with policy extensions
   ├── Mint inner OpenSSH user cert (unchanged)
   ├── Render per-session sshd_config from the cert's policy:
-  │     sshrtauth-force-command       → ForceCommand
-  │     sshrtauth-environment         → SetEnv (multiple)
-  │     sshrtauth-channel-policy      → AllowTcpForwarding / X11Forwarding / etc.
-  │     sshrtauth-max-session         → ClientAliveCountMax + ClientAliveInterval
+  │     mssh-force-command       → ForceCommand
+  │     mssh-environment         → SetEnv (multiple)
+  │     mssh-channel-policy      → AllowTcpForwarding / X11Forwarding / etc.
+  │     mssh-max-session         → ClientAliveCountMax + ClientAliveInterval
   │   …plus the hermetic-config bones (crypto floor, no PAM, etc.)
   ├── Open pipe pair (or socketpair)
   ├── Spawn  sshd -i -f /tmp/session-XXX.conf  with pipes as stdin/stdout
@@ -53,7 +53,7 @@ thread, no monitor process for us to manage.
 ### Wins
 
 - **Native enforcement of every policy extension OpenSSH can express.**
-  `sshrt.msshd.policy.translate_to_inner_cert_kwargs()` shrinks to
+  `mssh.msshd.policy.translate_to_inner_cert_kwargs()` shrinks to
   one line (or disappears). The "what does msshd enforce vs
   what does OpenSSH enforce" boundary moves entirely into OpenSSH.
 - **Per-session resource isolation.** A bug in one ForceCommand, a
@@ -160,9 +160,9 @@ full client+server+CA implementation. The remaining piece is the
 
 The reorg established:
 
-- `python/src/sshrt/msshd/` — wrapper server (Python).
-- `python/src/sshrt/mssh.py` — wrapper client (Python).
-- `python/src/sshrt/ca/`, `admin/`, `shim/` — supporting Python pieces.
+- `python/src/mssh/msshd/` — wrapper server (Python).
+- `python/src/mssh/mssh.py` — wrapper client (Python).
+- `python/src/mssh/ca/`, `admin/`, `shim/` — supporting Python pieces.
 - `go/` and `c/` skeleton directories with READMEs documenting the
   same layout per language.
 
@@ -176,8 +176,8 @@ runtime because `mssh` doesn't import from `msshd/`.
 The v1 outer-protocol frame format (JSON header + raw bytes) is
 implemented twice today:
 
-- `python/src/sshrt/mssh.py:build_header()` / `parse_ack()`
-- `python/src/sshrt/msshd/ssh_proxy.py:_read_header_line()` / `_write_ack()`
+- `python/src/mssh/mssh.py:build_header()` / `parse_ack()`
+- `python/src/mssh/msshd/ssh_proxy.py:_read_header_line()` / `_write_ack()`
 
 These two implementations have to stay byte-for-byte compatible
 forever. A drift-detection bug between them would silently break
@@ -189,14 +189,14 @@ server, C client + Go server, etc.) the combinatorics get ugly.
 `common/` module:
 
 ```
-python/src/sshrt/common/
+python/src/mssh/common/
 ├── __init__.py
 └── protocol.py     # PROTOCOL_VERSION, build_header, parse_header,
                     # build_ack, parse_ack
 ```
 
 Both `mssh.py` and `msshd/ssh_proxy.py` import from
-`sshrt.common.protocol`. Drift becomes impossible because there's
+`mssh.common.protocol`. Drift becomes impossible because there's
 one implementation.
 
 Mirror for `go/` and `c/` when they exist:
@@ -1134,7 +1134,7 @@ shipping a real release becomes a priority.
 
 msshd serves a static hardcoded banner today via the hermetic inner
 sshd's `Banner` directive (see `config/sshd_config.template` and
-`python/src/sshrt/msshd/inner.py:_DEFAULT_BANNER`). Per-session
+`python/src/mssh/msshd/inner.py:_DEFAULT_BANNER`). Per-session
 dynamic content would make this much more useful as an immediate
 "what's happening with this session" indicator.
 

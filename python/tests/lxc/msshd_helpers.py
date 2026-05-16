@@ -200,7 +200,7 @@ def systemd_msshd_unit() -> str:
         '[Service]\nWorkingDirectory=/app\n'
         'Environment="PYTHONPATH=/app/src"\n'
         'Environment="SSH_RT_AUTH_WRAPPER_STATE_DIR=/var/lib/ssh-rt-auth"\n'
-        'ExecStart=/usr/bin/python3 -m sshrt.msshd '
+        'ExecStart=/usr/bin/python3 -m mssh.msshd '
         '--config /etc/ssh-rt-auth/wrapper.yaml\n'
         'Restart=on-failure\nStandardError=journal\n'
         '[Install]\nWantedBy=multi-user.target\n'
@@ -264,7 +264,7 @@ def start_msshd_enforce(container: str, *, ca_ip: str,
         lxc_exec(container, 'sh', '-c',
                  'cd /app && PYTHONPATH=/app/src '
                  'SSH_RT_AUTH_WRAPPER_STATE_DIR=/var/lib/ssh-rt-auth '
-                 'nohup /usr/bin/python3 -m sshrt.msshd '
+                 'nohup /usr/bin/python3 -m mssh.msshd '
                  '--config /etc/ssh-rt-auth/wrapper.yaml '
                  '> /var/log/ssh-rt-auth/msshd.log 2>&1 & '
                  'echo $! > /run/msshd.pid')
@@ -315,7 +315,7 @@ exec env \\
     MSSH_KEY="${MSSH_KEY:-$HOME/.mssh/key.pem}" \\
     MSSH_CA="${MSSH_CA:-$HOME/.mssh/ca.pem}" \\
     PYTHONPATH=/app/src \\
-    /usr/bin/python3 -m sshrt.mssh "$@"
+    /usr/bin/python3 -m mssh.client "$@"
 '''
 
 

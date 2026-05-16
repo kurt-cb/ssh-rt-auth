@@ -1,4 +1,4 @@
-"""Tests for sshrt.msshd.proxy — bidirectional byte shuffler."""
+"""Tests for mssh.msshd.proxy — bidirectional byte shuffler."""
 from __future__ import annotations
 
 import asyncio
@@ -6,7 +6,7 @@ import os
 
 import pytest
 
-from sshrt.msshd.proxy import bidirectional_proxy, shuffle
+from mssh.msshd.proxy import bidirectional_proxy, shuffle
 
 
 pytestmark = pytest.mark.asyncio

@@ -7,7 +7,7 @@ from pathlib import Path
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
 
-from sshrt.ca.cert_minter import (OID_CHANNEL_POLICY, OID_SERVER_BIND,
+from mssh.ca.cert_minter import (OID_CHANNEL_POLICY, OID_SERVER_BIND,
                             OID_SOURCE_BIND, bootstrap_ca, issue_client_cert,
                             load_certificate, load_private_key,
                             mint_authorization_cert)
@@ -78,5 +78,5 @@ def test_mint_authorization_cert_signature_verifies(tmp_path, test_key):
         channels=['session'],
     )
     # Use the shim's verifier (defense in depth path).
-    from sshrt.shim.shim import _verify_cert_signed_by
+    from mssh.shim.shim import _verify_cert_signed_by
     assert _verify_cert_signed_by(cert, signing_cert)

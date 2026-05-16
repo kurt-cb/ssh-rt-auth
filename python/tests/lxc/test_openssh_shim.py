@@ -22,7 +22,7 @@ Architecture:
   stock OpenSSH sshd (port 22, inside container)
     | AuthorizedKeysCommand=/usr/local/bin/ssh-rt-auth-openssh-shim
     v
-  ssh-rt-auth-openssh-shim (Python, runs as user ``sshrt``)
+  ssh-rt-auth-openssh-shim (Python, runs as user ``mssh``)
     | mTLS POST /v1/authorize
     v
   CA container
@@ -32,8 +32,8 @@ Opt-in marker: ``-m openssh_shim``.
 
 Container names:
 
-  sshrt-openssh-ca       — CA + ssh-rt-admin
-  sshrt-openssh-target   — stock sshd + ssh-rt-auth-openssh-shim
+  mssh-openssh-ca       — CA + ssh-rt-admin
+  mssh-openssh-target   — stock sshd + ssh-rt-auth-openssh-shim
 """
 from __future__ import annotations
 
@@ -65,8 +65,8 @@ from log_helpers import OpsLog, banner, section
 pytestmark = [pytest.mark.lxc, pytest.mark.openssh_shim]
 
 
-CA_NAME     = 'sshrt-openssh-ca'
-TARGET_NAME = 'sshrt-openssh-target'
+CA_NAME     = 'mssh-openssh-ca'
+TARGET_NAME = 'mssh-openssh-target'
 CA_PORT     = 8443
 
 
@@ -75,7 +75,7 @@ CA_PORT     = 8443
 # ---------------------------------------------------------------------------
 
 def _gen_ed25519(host_dir: Path, name: str, comment: str) -> dict:
-    from sshrt.ca.identity_parser import sha256_fingerprint
+    from mssh.ca.identity_parser import sha256_fingerprint
     priv = host_dir / name
     if priv.exists():
         priv.unlink()
@@ -151,7 +151,7 @@ def test_openssh_shim_end_to_end(request, tmp_path_factory):
     section('Bootstrapping CA')
     lxc_exec(CA_NAME, 'sh', '-c',
              'PYTHONPATH=/app/src python3 -c "'
-             'from sshrt.ca.cert_minter import bootstrap_ca; '
+             'from mssh.ca.cert_minter import bootstrap_ca; '
              f"bootstrap_ca('/etc/ssh-rt-auth/ca', "
              f"tls_server_sans=['DNS:localhost','IP:127.0.0.1',"
              f"'IP:{ca_ip}'])\"",
@@ -182,7 +182,7 @@ def test_openssh_shim_end_to_end(request, tmp_path_factory):
     push_text(CA_NAME,
               '[Unit]\nDescription=ssh-rt-auth CA\nAfter=network.target\n'
               '[Service]\nWorkingDirectory=/app\nEnvironment="PYTHONPATH=/app/src"\n'
-              'ExecStart=/usr/bin/python3 -m sshrt.ca.server --config '
+              'ExecStart=/usr/bin/python3 -m mssh.ca.server --config '
               '/etc/ssh-rt-auth/ca-config.yaml\nRestart=on-failure\n'
               '[Install]\nWantedBy=multi-user.target\n',
               '/etc/systemd/system/ssh-rt-auth-ca.service')
@@ -201,8 +201,8 @@ def test_openssh_shim_end_to_end(request, tmp_path_factory):
                        check=True, capture_output=True)
     os.chmod(creds_dir / 'bootstrap-admin-key.pem', 0o600)
 
-    from sshrt.admin.client import CAClient
-    from sshrt.admin.key_parser import b64_blob, parse_key_text
+    from mssh.admin.client import CAClient
+    from mssh.admin.key_parser import b64_blob, parse_key_text
     admin = CAClient(
         base_url=f'https://{ca_ip}:{CA_PORT}',
         admin_cert=str(creds_dir / 'bootstrap-admin-cert.pem'),
@@ -241,10 +241,10 @@ def test_openssh_shim_end_to_end(request, tmp_path_factory):
         'max_cert_validity_seconds': 600,
     })
 
-    # ---- Set up the target: sshd, unprivileged sshrt user, shim ----------
-    section('Provisioning target: sshrt user, shim config, AuthorizedKeysCommand')
+    # ---- Set up the target: sshd, unprivileged mssh user, shim ----------
+    section('Provisioning target: mssh user, shim config, AuthorizedKeysCommand')
     lxc_exec(TARGET_NAME, 'useradd', '-r', '-s', '/usr/sbin/nologin',
-             '-d', '/nonexistent', 'sshrt', check=False)
+             '-d', '/nonexistent', 'mssh', check=False)
     # Unix accounts the SSH clients will log in as.
     for u in ('alice', 'bob', 'mallory'):
         lxc_exec(TARGET_NAME, 'useradd', '-m', '-s', '/bin/bash', u,
@@ -262,10 +262,10 @@ def test_openssh_shim_end_to_end(request, tmp_path_factory):
     lxc_exec(TARGET_NAME, 'mkdir', '-p', '/etc/ssh-rt-auth')
     push_file(TARGET_NAME, target_mtls_cert,
               '/etc/ssh-rt-auth/mtls-cert.pem', mode='640',
-              owner='root:sshrt')
+              owner='root:mssh')
     push_file(TARGET_NAME, target_mtls_key,
               '/etc/ssh-rt-auth/mtls-key.pem', mode='640',
-              owner='root:sshrt')
+              owner='root:mssh')
     push_file(TARGET_NAME, creds_dir / 'tls-ca-cert.pem',
               '/etc/ssh-rt-auth/ca-tls-root.pem', mode='644')
     push_file(TARGET_NAME, creds_dir / 'signing-cert.pem',
@@ -293,10 +293,10 @@ def test_openssh_shim_end_to_end(request, tmp_path_factory):
     push_file(TARGET_NAME, str(app_root / 'openssh' / 'openssh_shim.py'),
               '/usr/local/bin/ssh-rt-auth-openssh-shim',
               mode='755', owner='root:root')
-    # SQLite cache directory; the sshrt user must own it because the shim
-    # runs as that account (AuthorizedKeysCommandUser sshrt).
+    # SQLite cache directory; the mssh user must own it because the shim
+    # runs as that account (AuthorizedKeysCommandUser mssh).
     lxc_exec(TARGET_NAME, 'mkdir', '-p', '/var/cache/ssh-rt-auth')
-    lxc_exec(TARGET_NAME, 'chown', 'sshrt:sshrt', '/var/cache/ssh-rt-auth')
+    lxc_exec(TARGET_NAME, 'chown', 'mssh:mssh', '/var/cache/ssh-rt-auth')
     lxc_exec(TARGET_NAME, 'chmod', '0700', '/var/cache/ssh-rt-auth')
 
     # sshd_config drop-in.
@@ -306,7 +306,7 @@ def test_openssh_shim_end_to_end(request, tmp_path_factory):
               'AuthorizedKeysFile none\n'
               'AuthorizedKeysCommand /usr/local/bin/ssh-rt-auth-openssh-shim '
               '%u %t %k\n'
-              'AuthorizedKeysCommandUser sshrt\n'
+              'AuthorizedKeysCommandUser mssh\n'
               # PAM tries to load environment from /etc/environment; make
               # sure SSHRT_SHIM_CONFIG can be picked up by the shim.
               'AcceptEnv SSHRT_SHIM_CONFIG\n',

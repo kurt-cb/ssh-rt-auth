@@ -189,7 +189,7 @@ def test_cross_distro_client_matrix(provisioned_env):
                                              user.username, client_kind,
                                              expect, actual))
                     rows.append({
-                        'source':  source.replace('sshrt-lxc-', ''),
+                        'source':  source.replace('mssh-lxc-', ''),
                         'client':  client_kind,
                         'target':  host.canonical_name,
                         'user':    user.username,

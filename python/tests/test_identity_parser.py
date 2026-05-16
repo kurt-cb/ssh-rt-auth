@@ -6,7 +6,7 @@ import struct
 
 import pytest
 
-from sshrt.ca.identity_parser import (CertIdentity, IdentityParseError, PubkeyIdentity,
+from mssh.ca.identity_parser import (CertIdentity, IdentityParseError, PubkeyIdentity,
                                 parse_identity, parse_openssh_cert,
                                 parse_pubkey_blob, sha256_fingerprint)
 
@@ -84,7 +84,7 @@ def test_parse_openssh_cert_via_ssh_keygen(tmp_path):
     assert info.principals == ['alice']
     assert info.cert_type == 1
     # signature_key_fingerprint should equal the CA's pubkey fingerprint
-    from sshrt.ca.identity_parser import sha256_fingerprint
+    from mssh.ca.identity_parser import sha256_fingerprint
     ca_pub_line = (tmp_path / 'ca.pub').read_text().strip().split()
     ca_pub_blob = base64.b64decode(ca_pub_line[1])
     assert info.signature_key_fingerprint == sha256_fingerprint(ca_pub_blob)

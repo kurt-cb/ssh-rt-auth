@@ -89,9 +89,9 @@ def loopback_env(tmp_path):
         pytest.skip('127.0.0.3 not bindable on this host')
 
     from tests.conftest import TestKey
-    from sshrt.ca import cert_minter
-    from sshrt.ca.cert_minter import bootstrap_ca, issue_client_cert, load_certificate, load_private_key
-    from sshrt.ca.enrollment import Enrollment, KeyBinding
+    from mssh.ca import cert_minter
+    from mssh.ca.cert_minter import bootstrap_ca, issue_client_cert, load_certificate, load_private_key
+    from mssh.ca.enrollment import Enrollment, KeyBinding
 
     # ---- CA bootstrap ----
     ca_dir = tmp_path / 'ca'
@@ -149,11 +149,11 @@ def loopback_env(tmp_path):
 
     ca_log_path = ca_dir / 'ca-stderr.log'
     ca_log = ca_log_path.open('w')
-    # python/src/ must be on the subprocess's PYTHONPATH so sshrt is importable.
+    # python/src/ must be on the subprocess's PYTHONPATH so mssh is importable.
     src_dir = Path(__file__).resolve().parent.parent / 'src'
     env = {**os.environ, 'PYTHONPATH': str(src_dir)}
     ca_proc = subprocess.Popen(
-        [sys.executable, '-m', 'sshrt.ca.server', '--config', str(cfg_path)],
+        [sys.executable, '-m', 'mssh.ca.server', '--config', str(cfg_path)],
         cwd=str(Path(__file__).resolve().parent.parent),
         stdout=ca_log, stderr=subprocess.STDOUT,
         env=env,
@@ -197,9 +197,9 @@ def loopback_env(tmp_path):
 
 def test_loopback_full_ssh_authorization(loopback_env, tmp_path):
     import asyncssh
-    from sshrt.shim.config import ShimConfig
-    from sshrt.shim.shim import Shim
-    from sshrt.debug_sshd.ssh_server import _handle_session, make_server_factory
+    from mssh.shim.config import ShimConfig
+    from mssh.shim.shim import Shim
+    from mssh.debug_sshd.ssh_server import _handle_session, make_server_factory
 
     cfg = ShimConfig.load(loopback_env['shim_cfg'])
     shim = Shim(cfg)

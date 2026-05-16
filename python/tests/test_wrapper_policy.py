@@ -1,4 +1,4 @@
-"""Tests for sshrt.msshd.policy — parsing CA-minted X.509 authz certs
+"""Tests for mssh.msshd.policy — parsing CA-minted X.509 authz certs
 and translating extensions to OpenSSH critical-options.
 
 The CA-minting machinery is in ca.cert_minter; we reuse it here so the
@@ -11,9 +11,9 @@ import datetime as _dt
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from cryptography.hazmat.primitives import serialization
 
-from sshrt.ca.cert_minter import (generate_signing_key, _self_signed,
+from mssh.ca.cert_minter import (generate_signing_key, _self_signed,
                              mint_authorization_cert)
-from sshrt.msshd.policy import (parse_cert_policy,
+from mssh.msshd.policy import (parse_cert_policy,
                                     translate_to_inner_cert_kwargs)
 
 

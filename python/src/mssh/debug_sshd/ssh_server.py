@@ -27,12 +27,12 @@ from typing import Any
 import asyncssh
 from cryptography import x509
 
-from sshrt.shim.config import ShimConfig
-from sshrt.shim.shim import (STATUS_AUTHORIZED, STATUS_DENIED, STATUS_ERROR,
+from mssh.shim.config import ShimConfig
+from mssh.shim.shim import (STATUS_AUTHORIZED, STATUS_DENIED, STATUS_ERROR,
                        AuthorizeOutcome, Shim)
 
 
-log = logging.getLogger('sshrt.debug_sshd')
+log = logging.getLogger('mssh.debug_sshd')
 
 
 # X.509 OIDs for the policy extensions. Must match ca/cert_minter.py.
@@ -251,8 +251,8 @@ class _SshrtAuthServer(asyncssh.SSHServer):
         if self._conn is not None:
             try:
                 self._conn.set_extra_info(
-                    sshrt_auth_serial=outcome.serial,
-                    sshrt_auth_username=username,
+                    mssh_auth_serial=outcome.serial,
+                    mssh_auth_username=username,
                 )
             except Exception:
                 pass
@@ -295,8 +295,8 @@ async def _handle_session(process: asyncssh.SSHServerProcess) -> None:
 async def _handle_session_inner(process: asyncssh.SSHServerProcess) -> None:
     """Handle one authorized session: emit banner, then exec command or shell."""
     conn = process.channel.get_connection()
-    username = conn.get_extra_info('sshrt_auth_username') or process.get_extra_info('username') or '?'
-    serial = conn.get_extra_info('sshrt_auth_serial') or '?'
+    username = conn.get_extra_info('mssh_auth_username') or process.get_extra_info('username') or '?'
+    serial = conn.get_extra_info('mssh_auth_serial') or '?'
     banner = (
         f'ssh-rt-auth: authorized session\r\n'
         f'user={username} serial={serial}\r\n'

@@ -73,7 +73,7 @@ Historical design docs that predate the clean-room rewrite are in
 ```
 mssh/
 ├── python/                 # current implementation (mssh + msshd + mssh-ca + mssh-admin)
-│   ├── src/sshrt/          # (Python package; rename to `mssh` is pending)
+│   ├── src/mssh/          # the mssh Python package
 │   ├── tests/
 │   └── setup_adhoc.sh      # spin up the adhoc lab
 ├── design/                 # technical design docs (clean-room)

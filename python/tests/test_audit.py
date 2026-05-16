@@ -1,7 +1,7 @@
 """Unit tests for ca/audit.py."""
 from __future__ import annotations
 
-from sshrt.ca.audit import AuditLog
+from mssh.ca.audit import AuditLog
 
 
 def test_write_and_read(tmp_path):

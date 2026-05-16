@@ -7,8 +7,8 @@ import sys
 
 import pytest
 
-from sshrt.shim.cache import CacheEntry
-from sshrt.shim.sqlite_cache import SqliteCertCache
+from mssh.shim.cache import CacheEntry
+from mssh.shim.sqlite_cache import SqliteCertCache
 
 
 @pytest.fixture
@@ -67,13 +67,13 @@ def test_persistence_across_subprocesses(tmp_path):
     """Cross-process persistence — the real-world scenario for the OpenSSH
     shim (each sshd → shim call is a fresh subprocess)."""
     db = tmp_path / 'cache.db'
-    # python/src/ holds the sshrt package.
+    # python/src/ holds the mssh package.
     src_root = str(__import__('pathlib').Path(__file__).resolve().parent.parent / 'src')
     writer = f'''
 import sys, datetime as dt
 sys.path.insert(0, {src_root!r})
-from sshrt.shim.cache import CacheEntry
-from sshrt.shim.sqlite_cache import SqliteCertCache
+from mssh.shim.cache import CacheEntry
+from mssh.shim.sqlite_cache import SqliteCertCache
 c = SqliteCertCache({str(db)!r})
 now = dt.datetime.now(tz=dt.timezone.utc)
 c.put("fpProc", "10.0.0.50", CacheEntry(

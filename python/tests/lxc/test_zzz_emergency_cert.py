@@ -73,7 +73,7 @@ def _mint_emergency_cert_in_ca(ca_container: str, *,
     script = f"""\
 import base64, datetime, sys
 from cryptography.hazmat.primitives import serialization
-from sshrt.ca.cert_minter import (
+from mssh.ca.cert_minter import (
     load_private_key, load_certificate, mint_authorization_cert,
 )
 signing_key = load_private_key('/etc/ssh-rt-auth/ca/signing-key.pem')
@@ -189,7 +189,7 @@ def test_emergency_cert_used_when_ca_offline(provisioned_env):
                  'fuser -k -9 2222/tcp 2>/dev/null; sleep 3')
         lxc_exec(target_container, 'sh', '-c',
                  'cd /app && PYTHONPATH=/app/src nohup /usr/bin/python3 '
-                 '-m sshrt.debug_sshd.ssh_server '
+                 '-m mssh.debug_sshd.ssh_server '
                  '--shim-config /etc/ssh-rt-auth/server/shim.yaml '
                  '--host-key /etc/ssh-rt-auth/server/host-key '
                  '--users-file /etc/ssh-rt-auth/server/users.allowed '

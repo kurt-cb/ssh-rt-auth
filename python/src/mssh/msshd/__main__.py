@@ -1,4 +1,4 @@
-"""Entry point: ``python -m sshrt.msshd``."""
+"""Entry point: ``python -m mssh.msshd``."""
 from __future__ import annotations
 
 import sys

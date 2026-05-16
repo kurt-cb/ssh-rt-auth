@@ -15,21 +15,20 @@ network; stolen keys can't authorize from outside that network.
 
 ## Component naming
 
-Canonical names (Python package rename `sshrt` → `mssh` is pending
-but in flight):
+Canonical names:
 
-- **mssh** — the client (`python/src/sshrt/mssh.py`)
-- **msshd** — the server-side gateway daemon (`python/src/sshrt/msshd/`)
-- **mssh-ca** — the central CA service (`python/src/sshrt/ca/`)
-- **mssh-admin** — operator CLI (`python/src/sshrt/admin/`)
-- **debug_sshd** — debug-only AsyncSSH server (`python/src/sshrt/debug_sshd/`)
+- **mssh** — the client (`python/src/mssh/client.py`); `import mssh.client`
+- **msshd** — the server-side gateway daemon (`python/src/mssh/msshd/`)
+- **mssh-ca** — the central CA service (`python/src/mssh/ca/`)
+- **mssh-admin** — operator CLI (`python/src/mssh/admin/`)
+- **debug_sshd** — debug-only AsyncSSH server (`python/src/mssh/debug_sshd/`)
   — not a production tier
-- **shim** (library) — shared "call the CA" code (`python/src/sshrt/shim/`)
+- **shim** (library) — shared "call the CA" code (`python/src/mssh/shim/`)
 
 Avoid the word "wrapper" — historical, ambiguous. Use "gateway"
 for msshd. The previous "Tier 1 / 2 / 3" framing is also retired;
 mssh has a single production server (msshd) plus the optional AKC
-shim (`python/src/sshrt/akc_shim/`) for unmodified-OpenSSH compat.
+shim (`python/src/mssh/akc_shim/`) for unmodified-OpenSSH compat.
 
 ## Three operating modes
 
@@ -104,14 +103,14 @@ mssh/
 │   ├── setup.py            # legacy-compat shim for editable install
 │   ├── pytest.ini
 │   ├── requirements.txt
-│   ├── src/sshrt/          # package namespace (rename to `mssh` pending)
+│   ├── src/mssh/          # the mssh Python package
 │   │   ├── ca/             # CA server (Flask + mTLS)
 │   │   ├── admin/          # mssh-admin CLI
 │   │   ├── shim/           # shared "call the CA" library
 │   │   ├── debug_sshd/     # debug-only AsyncSSH server (not a tier)
 │   │   ├── akc_shim/       # OpenSSH AKC entry point (Tier-3 compat)
 │   │   ├── msshd/          # the gateway daemon
-│   │   └── mssh.py         # the client (single module)
+│   │   └── client.py       # the mssh client (single module)
 │   └── tests/
 ├── go/                     # future — Go port (placeholder)
 ├── c/                      # future — C for Alpine (placeholder)

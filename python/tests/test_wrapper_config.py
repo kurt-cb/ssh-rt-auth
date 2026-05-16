@@ -1,4 +1,4 @@
-"""Tests for sshrt.msshd.config."""
+"""Tests for mssh.msshd.config."""
 from __future__ import annotations
 
 import os
@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from sshrt.msshd.config import (MODE_ENFORCE, MODE_FALLBACK, WrapperConfig)
+from mssh.msshd.config import (MODE_ENFORCE, MODE_FALLBACK, WrapperConfig)
 
 
 def _write(tmp_path: Path, name: str, body: str) -> Path:

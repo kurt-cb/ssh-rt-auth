@@ -5,8 +5,8 @@ Wants=network-online.target
 
 [Service]
 Type=notify
-User=_sshrtwrapper
-Group=_sshrtwrapper
+User=_msshwrapper
+Group=_msshwrapper
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 ExecStart=/usr/local/bin/msshd --config /etc/ssh-rt-auth/wrapper.yaml
 Restart=on-failure

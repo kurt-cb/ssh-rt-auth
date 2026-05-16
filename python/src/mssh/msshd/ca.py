@@ -22,7 +22,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Union
 
-from sshrt.shim.ca_client import (AuthorizeResult, CAClient, CAClientFailedOver)
+from mssh.shim.ca_client import (AuthorizeResult, CAClient, CAClientFailedOver)
 
 from .config import WrapperConfig
 

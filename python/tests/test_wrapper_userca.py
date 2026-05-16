@@ -1,4 +1,4 @@
-"""Tests for sshrt.msshd.userca."""
+"""Tests for mssh.msshd.userca."""
 from __future__ import annotations
 
 import datetime as _dt
@@ -9,7 +9,7 @@ import tempfile
 import asyncssh
 import pytest
 
-from sshrt.msshd.userca import (DEFAULT_USER_CERT_TTL_SECONDS, UserCA)
+from mssh.msshd.userca import (DEFAULT_USER_CERT_TTL_SECONDS, UserCA)
 
 
 def test_generate_returns_usable_ca():

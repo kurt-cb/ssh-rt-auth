@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from sshrt.ca.enrollment import Enrollment, EnrollmentError, KeyBinding
+from mssh.ca.enrollment import Enrollment, EnrollmentError, KeyBinding
 
 
 @pytest.fixture

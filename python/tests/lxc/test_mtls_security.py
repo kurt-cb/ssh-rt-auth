@@ -120,7 +120,7 @@ def unenrolled_valid_cert(lxc_env, tmp_path_factory):
     """Issue a valid mTLS client cert signed by the CA's mTLS CA but never
     record the subject in the enrollment store.
     """
-    from sshrt.ca import cert_minter
+    from mssh.ca import cert_minter
     d = tmp_path_factory.mktemp('unenrolled-valid')
     tls_ca_key = cert_minter.load_private_key(lxc_env['tls_ca_key'])
     tls_ca_cert = cert_minter.load_certificate(lxc_env['ca_cert'])
@@ -248,7 +248,7 @@ def test_attack_auditor_role_cannot_add_server(lxc_env):
     Auditor role permits read-only ops; server.add must return 403 forbidden.
     """
     banner('Attack: auditor role attempting server.add')
-    from sshrt.admin.client import CAClient, CAClientError
+    from mssh.admin.client import CAClient, CAClientError
     superuser = CAClient(
         base_url=lxc_env['ca_url'],
         admin_cert=lxc_env['admin_cert'],

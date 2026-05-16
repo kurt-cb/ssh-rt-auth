@@ -52,8 +52,8 @@ from log_helpers import banner, section
 pytestmark = [pytest.mark.lxc, pytest.mark.wrapper_enforce]
 
 
-CA_NAME     = 'sshrt-wrapper-ca'
-TARGET_NAME = 'sshrt-wrapper-target'
+CA_NAME     = 'mssh-wrapper-ca'
+TARGET_NAME = 'mssh-wrapper-target'
 CA_PORT     = 8443
 WRAPPER_PORT = 2200
 
@@ -65,7 +65,7 @@ WRAPPER_PORT = 2200
 
 def _ssh_pubkey_blob_from_ed25519(pubkey) -> bytes:
     """Return the SSH wire-format ssh-ed25519 blob for an Ed25519 public
-    key. Matches sshrt.msshd.enforce_listener._ssh_pubkey_blob_from_cert.
+    key. Matches mssh.msshd.enforce_listener._ssh_pubkey_blob_from_cert.
     """
     from cryptography.hazmat.primitives import serialization
     raw = pubkey.public_bytes(
@@ -252,7 +252,7 @@ def test_wrapper_enforce_end_to_end(request, tmp_path_factory):
     section('Bootstrapping CA')
     lxc_exec(CA_NAME, 'sh', '-c',
              'PYTHONPATH=/app/src python3 -c "'
-             'from sshrt.ca.cert_minter import bootstrap_ca; '
+             'from mssh.ca.cert_minter import bootstrap_ca; '
              f"bootstrap_ca('/etc/ssh-rt-auth/ca', "
              f"tls_server_sans=['DNS:localhost','IP:127.0.0.1','IP:{ca_ip}'])"
              '"', timeout=120)
@@ -283,7 +283,7 @@ def test_wrapper_enforce_end_to_end(request, tmp_path_factory):
     push_text(CA_NAME,
               '[Unit]\nDescription=ssh-rt-auth CA\nAfter=network.target\n'
               '[Service]\nWorkingDirectory=/app\nEnvironment="PYTHONPATH=/app/src"\n'
-              'ExecStart=/usr/bin/python3 -m sshrt.ca.server --config '
+              'ExecStart=/usr/bin/python3 -m mssh.ca.server --config '
               '/etc/ssh-rt-auth/ca-config.yaml\nRestart=on-failure\n'
               '[Install]\nWantedBy=multi-user.target\n',
               '/etc/systemd/system/ssh-rt-auth-ca.service')
@@ -302,7 +302,7 @@ def test_wrapper_enforce_end_to_end(request, tmp_path_factory):
                        check=True, capture_output=True)
     os.chmod(creds_dir / 'bootstrap-admin-key.pem', 0o600)
 
-    from sshrt.admin.client import CAClient
+    from mssh.admin.client import CAClient
     admin = CAClient(
         base_url=f'https://{ca_ip}:{CA_PORT}',
         admin_cert=str(creds_dir / 'bootstrap-admin-cert.pem'),
@@ -419,7 +419,7 @@ def test_wrapper_enforce_end_to_end(request, tmp_path_factory):
               '[Service]\nWorkingDirectory=/app\n'
               'Environment="PYTHONPATH=/app/src"\n'
               'Environment="SSH_RT_AUTH_WRAPPER_STATE_DIR=/var/lib/ssh-rt-auth"\n'
-              'ExecStart=/usr/bin/python3 -m sshrt.msshd '
+              'ExecStart=/usr/bin/python3 -m mssh.msshd '
               '--config /etc/ssh-rt-auth/wrapper.yaml\n'
               'Restart=on-failure\n'
               'StandardError=journal\n'
@@ -453,7 +453,7 @@ def test_wrapper_enforce_end_to_end(request, tmp_path_factory):
 
     section('Running mssh alice@target -- whoami')
     r = lxc_exec(TARGET_NAME, 'sh', '-c',
-                 f'cd /app && PYTHONPATH=/app/src python3 -m sshrt.mssh '
+                 f'cd /app && PYTHONPATH=/app/src python3 -m mssh.client '
                  f'alice@{target_ip}:{WRAPPER_PORT} -- whoami',
                  check=False, timeout=30)
     print(f'mssh stdout: {r.stdout!r}', file=sys.stderr)

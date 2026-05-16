@@ -22,7 +22,7 @@ pytestmark = pytest.mark.lxc
 
 
 def _gen_user_key(tmp_path, name: str) -> dict:
-    from sshrt.ca.identity_parser import sha256_fingerprint
+    from mssh.ca.identity_parser import sha256_fingerprint
     priv = tmp_path / f'id_{name}'
     subprocess.run(['ssh-keygen', '-t', 'ed25519', '-f', str(priv),
                     '-N', '', '-C', f'{name}@wildcard-test'],
@@ -100,8 +100,8 @@ def _ssh_from(client_container: str, username: str,
 def test_wildcard_servers_pattern(provisioned_env, tmp_path):
     """`servers: ['srv-*']` grants every server whose canonical name starts
     with `srv-`; `servers: ['nomatch-*']` grants nothing."""
-    from sshrt.admin.client import CAClient
-    from sshrt.admin.key_parser import b64_blob, parse_key_text
+    from mssh.admin.client import CAClient
+    from mssh.admin.key_parser import b64_blob, parse_key_text
 
     admin = CAClient(
         base_url=provisioned_env['ca_url'],

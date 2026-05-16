@@ -17,11 +17,11 @@ provisioning.
 
 Containers (FIXED names, stomped on each run):
 
-    sshrt-adhoc-ca       CA + ssh-rt-admin
-    sshrt-adhoc-acct     Accounting SSH server
-    sshrt-adhoc-sales    Sales SSH server
-    sshrt-adhoc-hr       HR SSH server
-    sshrt-adhoc-eng      Engineering server (Alpine, cross-distro)
+    mssh-adhoc-ca       CA + ssh-rt-admin
+    mssh-adhoc-acct     Accounting SSH server
+    mssh-adhoc-sales    Sales SSH server
+    mssh-adhoc-hr       HR SSH server
+    mssh-adhoc-eng      Engineering server (Alpine, cross-distro)
 
 Vanilla sshd lives on port 22 in every server (always alive — your
 backdoor if msshd is misbehaving). msshd lives on port 2200 in
@@ -70,11 +70,11 @@ pytestmark = [pytest.mark.lxc, pytest.mark.setup_only_msshd]
 # Topology
 # ---------------------------------------------------------------------------
 
-CA_NAME    = 'sshrt-adhoc-ca'
-ACCT_NAME  = 'sshrt-adhoc-acct'
-SALES_NAME = 'sshrt-adhoc-sales'
-HR_NAME    = 'sshrt-adhoc-hr'
-ENG_NAME   = 'sshrt-adhoc-eng'
+CA_NAME    = 'mssh-adhoc-ca'
+ACCT_NAME  = 'mssh-adhoc-acct'
+SALES_NAME = 'mssh-adhoc-sales'
+HR_NAME    = 'mssh-adhoc-hr'
+ENG_NAME   = 'mssh-adhoc-eng'
 
 SSH_CONTAINERS = [ACCT_NAME, SALES_NAME, HR_NAME, ENG_NAME]
 ALL_CONTAINERS = [CA_NAME] + SSH_CONTAINERS
@@ -168,7 +168,7 @@ def _keygen_in_container(container: str, username: str,
     """Generate the user's Ed25519 keypair INSIDE their primary container,
     then pull both halves to ``artifacts_dir``.
     """
-    from sshrt.ca.identity_parser import sha256_fingerprint
+    from mssh.ca.identity_parser import sha256_fingerprint
 
     _ensure_unix_account(container, username)
     priv = f'/home/{username}/.ssh/id_ed25519'
@@ -443,7 +443,7 @@ def _systemd_msshd_unit() -> str:
         '[Service]\nWorkingDirectory=/app\n'
         'Environment="PYTHONPATH=/app/src"\n'
         'Environment="SSH_RT_AUTH_WRAPPER_STATE_DIR=/var/lib/ssh-rt-auth"\n'
-        'ExecStart=/usr/bin/python3 -m sshrt.msshd '
+        'ExecStart=/usr/bin/python3 -m mssh.msshd '
         '--config /etc/ssh-rt-auth/wrapper.yaml\n'
         'Restart=on-failure\nStandardError=journal\n'
         '[Install]\nWantedBy=multi-user.target\n'
@@ -473,7 +473,7 @@ def _install_msshd(c: str, *, mode: str,
         lxc_exec(c, 'sh', '-c',
                  'cd /app && PYTHONPATH=/app/src '
                  'SSH_RT_AUTH_WRAPPER_STATE_DIR=/var/lib/ssh-rt-auth '
-                 'nohup /usr/bin/python3 -m sshrt.msshd '
+                 'nohup /usr/bin/python3 -m mssh.msshd '
                  '--config /etc/ssh-rt-auth/wrapper.yaml '
                  '> /var/log/ssh-rt-auth/msshd.log 2>&1 & '
                  'echo $! > /run/msshd.pid')
@@ -526,7 +526,7 @@ def _push_msshd_cert_material(server: _Server, *,
 
 
 # ---------------------------------------------------------------------------
-# In-container mssh shim — a 3-line shell wrapper around `python3 -m sshrt.mssh`
+# In-container mssh shim — a 3-line shell wrapper around `python3 -m mssh.client`
 # ---------------------------------------------------------------------------
 
 _MSSH_WRAPPER_SCRIPT = '''#!/bin/sh
@@ -538,7 +538,7 @@ exec env \\
     MSSH_KEY="${MSSH_KEY:-$HOME/.mssh/key.pem}" \\
     MSSH_CA="${MSSH_CA:-$HOME/.mssh/ca.pem}" \\
     PYTHONPATH=/app/src \\
-    /usr/bin/python3 -m sshrt.mssh "$@"
+    /usr/bin/python3 -m mssh.client "$@"
 '''
 
 
@@ -610,7 +610,7 @@ def _verify_mssh(*, from_container: str, user: str,
         f'MSSH_KEY=/home/{user}/.mssh/key.pem '
         f'MSSH_CA=/home/{user}/.mssh/ca.pem '
         f'PYTHONPATH=/app/src '
-        f'/usr/bin/python3 -m sshrt.mssh '
+        f'/usr/bin/python3 -m mssh.client '
         f'{user}@{target_ip}:{target_port} -- whoami'
     )
     r = lxc_exec(from_container, 'sh', '-c', cmd, check=False, timeout=30)
@@ -644,7 +644,7 @@ def _msshd_restart_cmd(server: _Server) -> str:
             f'fuser -k -9 {MSSHD_PORT}/tcp 2>/dev/null; sleep 1; '
             f'cd /app && PYTHONPATH=/app/src '
             f'SSH_RT_AUTH_WRAPPER_STATE_DIR=/var/lib/ssh-rt-auth '
-            f'nohup /usr/bin/python3 -m sshrt.msshd '
+            f'nohup /usr/bin/python3 -m mssh.msshd '
             f'--config /etc/ssh-rt-auth/wrapper.yaml '
             f'> /var/log/ssh-rt-auth/msshd.log 2>&1 & '
             f'echo $! > /run/msshd.pid'
@@ -977,11 +977,11 @@ mssh_as() {{
     if [ "$#" -eq 0 ]; then
         MSSH_CERT="$cert" MSSH_KEY="$key" MSSH_CA="$USER_CA" \\
             PYTHONPATH="$MSSH_SRC_DIR" \\
-            python3 -m sshrt.mssh "$unix@$ip:$MSSHD_PORT"
+            python3 -m mssh.client "$unix@$ip:$MSSHD_PORT"
     else
         MSSH_CERT="$cert" MSSH_KEY="$key" MSSH_CA="$USER_CA" \\
             PYTHONPATH="$MSSH_SRC_DIR" \\
-            python3 -m sshrt.mssh "$unix@$ip:$MSSHD_PORT" -- "$@"
+            python3 -m mssh.client "$unix@$ip:$MSSHD_PORT" -- "$@"
     fi
 }}
 
@@ -1092,7 +1092,7 @@ def test_setup_adhoc_msshd_journey(request, tmp_path_factory):
     section('Bootstrapping CA')
     lxc_exec(CA_NAME, 'sh', '-c',
              'PYTHONPATH=/app/src python3 -c "'
-             'from sshrt.ca.cert_minter import bootstrap_ca; '
+             'from mssh.ca.cert_minter import bootstrap_ca; '
              f"bootstrap_ca('/etc/ssh-rt-auth/ca', "
              f"tls_server_sans=['DNS:localhost','IP:127.0.0.1',"
              f"'IP:{ips[CA_NAME]}'])\"", timeout=120)
@@ -1121,7 +1121,7 @@ def test_setup_adhoc_msshd_journey(request, tmp_path_factory):
     push_text(CA_NAME,
               '[Unit]\nDescription=ssh-rt-auth CA\nAfter=network.target\n'
               '[Service]\nWorkingDirectory=/app\nEnvironment="PYTHONPATH=/app/src"\n'
-              'ExecStart=/usr/bin/python3 -m sshrt.ca.server --config '
+              'ExecStart=/usr/bin/python3 -m mssh.ca.server --config '
               '/etc/ssh-rt-auth/ca-config.yaml\nRestart=on-failure\n'
               '[Install]\nWantedBy=multi-user.target\n',
               '/etc/systemd/system/ssh-rt-auth-ca.service')
@@ -1138,7 +1138,7 @@ def test_setup_adhoc_msshd_journey(request, tmp_path_factory):
                         str(ca_creds_dir / n)],
                        check=True, capture_output=True)
     os.chmod(ca_creds_dir / 'bootstrap-admin-key.pem', 0o600)
-    from sshrt.admin.client import CAClient
+    from mssh.admin.client import CAClient
     admin = CAClient(
         base_url=f'https://{ips[CA_NAME]}:{CA_PORT}',
         admin_cert=str(ca_creds_dir / 'bootstrap-admin-cert.pem'),
@@ -1319,7 +1319,7 @@ def test_setup_adhoc_msshd_journey(request, tmp_path_factory):
                 f'MSSH_KEY={pki_dir}/{u.username}.key '
                 f'MSSH_CA={pki_dir}/user-ca.crt '
                 f'PYTHONPATH={app_root}/python/src '
-                f'python3 -m sshrt.mssh '
+                f'python3 -m mssh.client '
                 f'{u.username}@{ips[s.container]}:{MSSHD_PORT} -- whoami'
             )
             r = subprocess.run(['sh', '-c', cmd], capture_output=True,

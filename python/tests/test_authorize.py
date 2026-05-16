@@ -7,10 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from sshrt.ca import authorize, cert_minter
-from sshrt.ca.audit import AuditLog
-from sshrt.ca.authorize import AuthorizeContext, handle_authorize
-from sshrt.ca.enrollment import Enrollment, KeyBinding
+from mssh.ca import authorize, cert_minter
+from mssh.ca.audit import AuditLog
+from mssh.ca.authorize import AuthorizeContext, handle_authorize
+from mssh.ca.enrollment import Enrollment, KeyBinding
 
 
 def _b64(b): return base64.b64encode(b).decode('ascii')

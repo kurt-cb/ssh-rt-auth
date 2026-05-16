@@ -24,11 +24,11 @@ from pathlib import Path
 
 
 # Container names.
-CA_HOST       = 'sshrt-lxc-ca'
-SSHRT_U1      = 'sshrt-lxc-u1'
-SSHRT_U2      = 'sshrt-lxc-u2'
-SSHRT_U3      = 'sshrt-lxc-u3'
-SSHRT_ALPINE  = 'sshrt-lxc-alpine'
+CA_HOST       = 'mssh-lxc-ca'
+SSHRT_U1      = 'mssh-lxc-u1'
+SSHRT_U2      = 'mssh-lxc-u2'
+SSHRT_U3      = 'mssh-lxc-u3'
+SSHRT_ALPINE  = 'mssh-lxc-alpine'
 
 ALL_SSH_HOSTS = [SSHRT_U1, SSHRT_U2, SSHRT_U3, SSHRT_ALPINE]
 ALL_CONTAINERS = [CA_HOST] + ALL_SSH_HOSTS
@@ -186,7 +186,7 @@ def push_source(container: str, app_root: Path) -> None:
     ``app_root`` is the repo root; the tar bundles the Python source
     (python/src/ → /app/src/) plus the language-neutral configs
     (config/, scripts/, systemd/) used by the wrapper at runtime.
-    Tests inside the container reference ``/app/src/sshrt/...``.
+    Tests inside the container reference ``/app/src/mssh/...``.
     """
     with tempfile.NamedTemporaryFile(suffix='.tar.gz', delete=False) as f:
         tar = f.name
