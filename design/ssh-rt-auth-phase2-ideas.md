@@ -1041,6 +1041,90 @@ proceeds over ssh exactly as it would in production.
 
 ---
 
+## 16. Distro packaging path (`.deb` / `.rpm` / `.apk`)
+
+### Idea
+
+Long-term: ship native distro packages so the operator install
+becomes literally `apt install mssh msshd` (Ubuntu/Debian),
+`dnf install` (RHEL/Fedora), `apk add` (Alpine), instead of running
+[§15](#15-install_mssh--distro-style-installer--byo-container-adhoc-lab)'s
+shell installer.
+
+### Three tiers of effort
+
+  - **Quick win (~1 day): [`fpm`](https://github.com/jordansissel/fpm).**
+    Eats a tarball or wheel, spits out `.deb` + `.rpm` + `.apk` from
+    one command. No proper changelogs, no signing, no infrastructure;
+    good enough for "users can `apt install ./mssh_0.1_amd64.deb`."
+    Right call for the first release.
+
+  - **Proper per-distro packaging (~1-2 weeks).** `dh-virtualenv`
+    for Debian (packages the venv into a `.deb` — the standard
+    Python-on-Debian story), proper `.spec` for RPM, `APKBUILD` for
+    Alpine. Cleaner integration with apt/dnf/apk; more recipes to
+    maintain over time.
+
+  - **[openSUSE Build Service (OBS)](https://build.opensuse.org/).**
+    Free for FOSS, used by KDE/Mozilla. Builds `.deb` / `.rpm` /
+    `.apk` from a single source spec, for every distro you care
+    about, automatically on push. Setup is half a day; after that
+    it's a build-and-distribute pipeline you don't maintain.
+
+### Why the underlying language matters
+
+apt/dnf/apk were built around C's "one binary + shared libs in
+known paths" model. Python (and to some extent Go) violate that
+assumption — Python needs an interpreter + venv; Go static binaries
+solve the interpreter problem but bring their own platform issues.
+
+  - **Python** packaging: `dh-virtualenv` is the least-bad answer —
+    you ship the entire venv (~30MB), distro-managed. `fpm` does
+    the same thing with less ceremony.
+  - **Go** packaging is *normally* trivial — a 15MB static binary
+    that drops in `/usr/bin/`. **BUT Go does not target musl
+    cleanly** (Alpine's libc). With `CGO_ENABLED=1` the binary
+    depends on glibc; with `CGO_ENABLED=0` you lose cgo-dependent
+    functionality (system DNS resolver, some crypto, system
+    libraries). There are workarounds (alpine-go images, gccgo,
+    cross-compile to musl with special toolchains) but they're
+    not "just run `go build`."
+  - **C / C++** packaging is what distro tooling was designed for;
+    smallest binaries, cleanest integration, but biggest engineering
+    investment to write.
+  - **Rust** packaging is increasingly first-class via cargo-deb /
+    cargo-rpm, with musl support that actually works (`x86_64-unknown-linux-musl`
+    target builds cleanly for Alpine). If "small static binary that
+    also runs on Alpine" matters, Rust is currently the cleanest
+    answer of the cross-language options.
+
+### Implications for the language strategy
+
+If Alpine support stays a goal (it does — Alpine + Python is the PoC
+target), the Go port's distro-packaging story is harder than initially
+hoped. Options:
+
+  1. Accept the constraint: ship Python on Alpine via the venv
+     packaging path; Go on glibc-only distros.
+  2. Bite the bullet on the C port for Alpine specifically (clean
+     `.apk` story, smallest footprint, hardest to write).
+  3. Consider Rust as the third language slot instead of Go for
+     the Alpine target — single-binary `.apk` works out of the
+     box, identity-management ecosystem (rustls, x509-cert, ssh-key)
+     is mature enough.
+
+This isn't a near-term decision, but worth knowing before committing
+to a Go port whose primary value-prop (clean static binary
+distribution) doesn't apply to half the deployment targets.
+
+### Out of scope
+
+The user noted this is "probably out of scope" — captured here so
+we don't lose the constraint. No action implied; revisit when
+shipping a real release becomes a priority.
+
+---
+
 ## How items relate
 
 ```
