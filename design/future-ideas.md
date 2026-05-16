@@ -1128,6 +1128,54 @@ shipping a real release becomes a priority.
 
 ---
 
+## 17. Per-session banner with variable substitution
+
+### Idea
+
+msshd serves a static hardcoded banner today via the hermetic inner
+sshd's `Banner` directive (see `config/sshd_config.template` and
+`python/src/sshrt/msshd/inner.py:_DEFAULT_BANNER`). Per-session
+dynamic content would make this much more useful as an immediate
+"what's happening with this session" indicator.
+
+Target template:
+
+```
+{user} — {client user; sally can be granted access to fred's account}
+Welcome to {server}, owned by {group}.
+Authorization: $MSSH_AUTH_DATA  (some details from the CA)
+$ADMIN_HELP — how to modify this banner via mssh-admin on the CA.
+```
+
+### Implementation sketch
+
+  - msshd already calls the CA for every connection and knows
+    user / server / group / authorization details at session-establish
+    time. Write a per-session banner file just before the inner sshd
+    accepts the connection, and clean up after the session closes.
+  - `Banner` is pre-auth in OpenSSH, but the inner sshd's "auth"
+    is with msshd's just-minted ephemeral cert — by the time the
+    banner is rendered the CA has already returned its decision,
+    so the substitution data is all known.
+  - Banner template lives in the CA enrollment record (per-server
+    or per-server-group) so different deployments can carry their
+    own welcome text.
+
+### CA-side admin surface
+
+  - `mssh-admin server banner set <server> --template <file>`
+  - `mssh-admin server-group banner set <group> --template <file>`
+  - `mssh-admin server banner show <server>` (preview with placeholders)
+
+### LOC estimate
+
+  - msshd inner.py: ~80 lines for per-session banner write +
+    cleanup + template substitution.
+  - CA enrollment schema + admin endpoints: ~120 lines.
+  - mssh-admin CLI commands: ~60 lines.
+
+---
+
 ## How items relate
 
 ```

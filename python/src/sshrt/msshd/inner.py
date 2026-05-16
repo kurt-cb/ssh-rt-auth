@@ -38,6 +38,21 @@ from .config import WrapperConfig
 log = logging.getLogger('msshd.inner')
 
 
+_DEFAULT_BANNER = """\
+─────────────────────────────────────────────────────────────
+  Welcome — this session is mediated by mssh.
+
+  Authorization was issued by the mssh CA. Your access is
+  logged centrally. Per-session context (user, server, group,
+  CA authorization details) will appear here once variable
+  substitution lands — see design/future-ideas.md.
+
+  To customize this banner, contact your administrator
+  (mssh-admin server banner — coming).
+─────────────────────────────────────────────────────────────
+"""
+
+
 def _find_template() -> Path:
     """Locate the hermetic sshd_config.template file.
 
@@ -153,12 +168,20 @@ class InnerSshd:
         self._port = _allocate_port(lo, hi)
         log.info('inner sshd will bind 127.0.0.1:%d', self._port)
 
-        # 4. Render the hermetic config.
+        # 4. Write the pre-auth banner file. Hardcoded content for
+        #    now; per-session ({user}, {server}, {group},
+        #    $MSSH_AUTH_DATA) substitution is planned (future-ideas.md).
+        banner_path = self.state_dir / 'banner'
+        banner_path.write_text(_DEFAULT_BANNER)
+        os.chmod(banner_path, 0o0644)
+
+        # 5. Render the hermetic config.
         config_path = self.state_dir / 'sshd_config'
         rendered = _render_template(_find_template(),
             INNER_PORT=str(self._port),
             INNER_HOST_KEY=str(host_key),
             USER_CA_PUBKEY=str(self.user_ca_pubkey_path),
+            BANNER_FILE=str(banner_path),
         )
         config_path.write_text(rendered)
         os.chmod(config_path, 0o0600)

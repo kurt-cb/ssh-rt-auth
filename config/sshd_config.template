@@ -10,6 +10,12 @@ ListenAddress 127.0.0.1
 Port {{INNER_PORT}}
 HostKey {{INNER_HOST_KEY}}
 
+# Pre-auth banner identifying this as an mssh-mediated session.
+# Content is hardcoded in msshd today; per-session variable
+# substitution ({user}, {server}, {group}, $MSSH_AUTH_DATA) is a
+# planned feature — see design/future-ideas.md.
+Banner {{BANNER_FILE}}
+
 # Auth: cert-only, via local user-CA pinned in TrustedUserCAKeys.
 AuthenticationMethods publickey
 PubkeyAuthentication yes

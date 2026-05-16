@@ -36,7 +36,7 @@ fi
 
 # shell out
 echo "Shell-ing out with adhoc-env setup; ADHOC_TEST_ENV.md has details."
-bash -c 'source ./adhoc-env.sh; export PS1="adhoc> "; exec bash'
+bash -c 'source ./adhoc-env.sh; unset PROMPT_COMMAND; export PS1="adhoc> "; exec bash'
 
 ./cleanup_containers.sh
 rm -f ADHOC_TEST_ENV.md adhoc-env.sh
